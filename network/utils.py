@@ -51,7 +51,7 @@ def visualize_topo(topo, filename='topology.png'):
 
     # Final visual tweaks
     plt.title('Mininet Topology Visualization', fontsize=15)
-    plt.legend(scatterpoints=1)
+    # plt.legend(scatterpoints=1)
     plt.axis('off') # Hide axis coordinates
     
     # Save to file
@@ -71,4 +71,4 @@ if __name__ == '__main__':
 
     # Instantiate and visualize
     my_topo = SimpleTopo()
-    visualize_topo(my_topo, 'my_network.png')
+    visualize_topo(my_topo, 'example_topo.png')
