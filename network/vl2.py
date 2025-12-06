@@ -53,8 +53,8 @@ class VL2Topo(Topo):
 
 if __name__ == '__main__':
     # Make VL2 networks
-    topo2b2 = VL2Topo(D_A=2, DI_2=2)
-    topo4b4 = VL2Topo(D_A=4, DI_2=4)
+    topo2b2 = VL2Topo(D_A=2, D_I=2)
+    topo4b4 = VL2Topo(D_A=4, D_I=4)
 
     # Visualize topo
     visualize_topo(topo2b2, 'vl2_2b2_topology')
