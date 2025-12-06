@@ -1,6 +1,6 @@
 from mininet.topo import Topo
 from mininet.link import TCLink
-from utils import visualize_topo
+# from utils import visualize_topo
 
 class VL2Topo(Topo):
     def __init__(self, D_A=8, D_I=8, server_link=1, switch_link=10):
@@ -57,5 +57,5 @@ if __name__ == '__main__':
     topo4b4 = VL2Topo(D_A=4, D_I=4)
 
     # Visualize topo
-    visualize_topo(topo2b2, 'vl2_2b2_topology')
-    visualize_topo(topo4b4, 'vl2_4b4_topology')
+    # visualize_topo(topo2b2, 'vl2_2b2_topology')
+    # visualize_topo(topo4b4, 'vl2_4b4_topology')
