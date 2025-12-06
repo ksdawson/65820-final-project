@@ -43,9 +43,9 @@ class ClosTopo(Topo):
                 )
 
         # Store state
-        self.hosts = hosts
-        self.leaf_switches = leaf_switches
-        self.spine_switches = spine_switches
+        self._hosts = hosts
+        self._leaf_switches = leaf_switches
+        self._spine_switches = spine_switches
 
 if __name__ == '__main__':
     # Make clos network
