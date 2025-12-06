@@ -30,7 +30,7 @@ class ClosTopo(Topo):
                 )
 
         # Create layer 3
-        spine_switches = []
+        spine_switches = {}
         for s in range(spines):
             # Create spine switch
             switch_name = f's{s}'
@@ -52,4 +52,4 @@ if __name__ == '__main__':
     topo = ClosTopo()
 
     # Visualize topo
-    visualize_topo(topo)
+    visualize_topo(topo, 'clos_topology.png')
