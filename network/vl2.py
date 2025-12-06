@@ -45,9 +45,9 @@ class VL2Topo(Topo):
             aggr = self._aggr_switches[f'a{t%num_aggr}']
             self.addLink(tor, aggr, cls=TCLink, bw=switch_link, delay='0ms', loss=1, max_queue_size=100)
         # Connect aggregate to intermediate switches
-        for a in range(D_A/2*num_aggr):
+        for a in range(D_A//2*num_aggr):
             # Connects to D_A/2 inter
-            aggr = self._aggr_switches[f'a{a//(D_A/2)}']
+            aggr = self._aggr_switches[f'a{a//(D_A//2)}']
             inter = self._inter_switches[f'i{a%num_inter}']
             self.addLink(aggr, inter, cls=TCLink, bw=switch_link, delay='0ms', loss=1, max_queue_size=100)
 
