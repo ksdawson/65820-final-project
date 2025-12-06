@@ -1,5 +1,4 @@
 from mininet.net import Mininet
-from mininet.node import OVSKernelSwitch, RemoteController
 from mininet.log import setLogLevel
 from vl2 import VL2Topo
 
@@ -25,7 +24,7 @@ def send_bytes_dst_to_src(src, dst, byte_count):
 def run():
     # Initialize Network
     topo = VL2Topo(D_A=2, D_I=2)
-    net = Mininet(topo=topo, switch=OVSKernelSwitch, controller=RemoteController)
+    net = Mininet(topo=topo)
     net.start()
 
     # Get hosts
