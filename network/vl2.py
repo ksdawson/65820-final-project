@@ -2,11 +2,6 @@ from mininet.topo import Topo
 from mininet.link import TCLink
 from utils import visualize_topo
 
-# Uses a clos like topology
-# Hosts connect to ToR switches
-# ToR switches connect to aggregate switches
-# Aggregate switches connect to intermediate switches
-
 class VL2Topo(Topo):
     def __init__(self, D_A=8, D_I=8, server_link=1, switch_link=10):
         """
@@ -21,9 +16,9 @@ class VL2Topo(Topo):
         super(VL2Topo, self).__init__()
 
         # Num of nodes
-        num_inter = D_A / 2
+        num_inter = D_A // 2
         num_aggr = D_I
-        num_tor = D_A * D_I / 4
+        num_tor = D_A * D_I // 4
         num_host = 20 * num_tor
 
         # Setup nodes
@@ -44,25 +39,23 @@ class VL2Topo(Topo):
                     max_queue_size=100 # num packets
                 )
         # Connect ToRs to aggregate switches
-        for a in range(num_aggr):
-            aggr = self._aggr_switches[f'a{a}']
-            for t in range(D_A/2):
-                tor = self._tor_switches[f't{a*(D_A/2)+t}']
-                self.addLink(tor, aggr, cls=TCLink,
-                    bw=switch_link, delay='0ms', loss=1, max_queue_size=100
-                )
+        for t in range(2*num_tor):
+            # Connects to two aggr
+            tor = self._tor_switches[f't{t//2}']
+            aggr = self._aggr_switches[f'a{t%num_aggr}']
+            self.addLink(tor, aggr, cls=TCLink, bw=switch_link, delay='0ms', loss=1, max_queue_size=100)
         # Connect aggregate to intermediate switches
-        for i in range(num_inter):
-            inter = self._inter_switches[f'i{i}']
-            for a in range(D_I):
-                aggr = self._aggr_switches[f'a{i*D_I+a}']
-                self.addLink(aggr, inter, cls=TCLink,
-                    bw=switch_link, delay='0ms', loss=1, max_queue_size=100
-                )
+        for a in range(D_A/2*num_aggr):
+            # Connects to D_A/2 inter
+            aggr = self._aggr_switches[f'a{a//(D_A/2)}']
+            inter = self._inter_switches[f'i{a%num_inter}']
+            self.addLink(aggr, inter, cls=TCLink, bw=switch_link, delay='0ms', loss=1, max_queue_size=100)
 
 if __name__ == '__main__':
-    # Make clos network
-    topo = VL2Topo(D_A=2, DI_2=2)
+    # Make VL2 networks
+    topo2b2 = VL2Topo(D_A=2, DI_2=2)
+    topo4b4 = VL2Topo(D_A=4, DI_2=4)
 
     # Visualize topo
-    visualize_topo(topo, 'vl2_topology.png')
+    visualize_topo(topo2b2, 'vl2_2b2_topology')
+    visualize_topo(topo4b4, 'vl2_4b4_topology')

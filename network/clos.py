@@ -52,4 +52,4 @@ if __name__ == '__main__':
     topo = ClosTopo()
 
     # Visualize topo
-    visualize_topo(topo, 'clos_topology.png')
+    visualize_topo(topo, 'clos_topology')
