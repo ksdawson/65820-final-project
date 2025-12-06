@@ -1,5 +1,6 @@
 from mininet.net import Mininet
 from mininet.log import setLogLevel
+from mininet.util import dumpNodeConnections
 from vl2 import VL2Topo
 
 def send_bytes_dst_to_src(src, dst, byte_count):
@@ -26,6 +27,13 @@ def run():
     topo = VL2Topo(D_A=2, D_I=2)
     net = Mininet(topo=topo)
     net.start()
+
+    # This dumps the topology and how nodes are interconnected through
+    # links.
+    dumpNodeConnections(net.hosts)
+
+    # This performs a basic all pairs ping test.
+    net.pingAll()
 
     # Get hosts
     h0 = net.get('h0') 
