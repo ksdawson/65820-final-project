@@ -5,6 +5,7 @@ from mininet.net import Mininet
 from mininet.node import RemoteController
 from mininet.log import setLogLevel, info
 from mininet.cli import CLI
+from mininet.clean import cleanup
 from vl2 import VL2Topo 
 
 def parse_flow_output_ports(switch_name):
@@ -71,6 +72,9 @@ def test_vlb_logic(net):
         info('*** FAIL: No uplink traffic detected. Check controller logic or port mapping. ***\n')
 
 def setup_network(D_A=2, D_I=2):
+    # Kill any old processes
+    cleanup()
+
     # Initialize Network
     topo = VL2Topo(D_A, D_I)
     net = Mininet(topo=topo, controller=RemoteController)
