@@ -15,7 +15,7 @@ class VL2Controller(SimpleSwitch13):
         # In VL2, we need to know which ports point "UP" to the spine
         # and which point "DOWN" to hosts.
         # For simulation simplicity, let's assume specific ports are uplinks.
-        self.UPLINK_PORTS = [1, 2] # Example: Ports connecting ToR to Aggr
+        self.UPLINK_PORTS = [21, 22] # Example: Ports connecting ToR to Aggr
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
