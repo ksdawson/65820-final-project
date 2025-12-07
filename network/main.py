@@ -22,18 +22,21 @@ def send_bytes_dst_to_src(src, dst, byte_count):
     
     return output
 
+def debug(net):
+    # This dumps the topology and how nodes are interconnected through links.
+    dumpNodeConnections(net.hosts)
+
+    # This performs a basic all pairs ping test.
+    net.pingAll()
+
 def run():
     # Initialize Network
     topo = VL2Topo(D_A=2, D_I=2)
     net = Mininet(topo=topo)
     net.start()
 
-    # This dumps the topology and how nodes are interconnected through
-    # links.
-    dumpNodeConnections(net.hosts)
-
-    # This performs a basic all pairs ping test.
-    net.pingAll()
+    # Debug if needed
+    # debug(net)
 
     # Get hosts
     h0 = net.get('h0') 
