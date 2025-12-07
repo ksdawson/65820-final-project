@@ -1,121 +1,40 @@
-import random
-from ryu.controller import ofp_event
-from ryu.controller.handler import MAIN_DISPATCHER, set_ev_cls
-from ryu.lib.packet import packet, ethernet, ether_types, ipv4
+import networkx as nx
+from ryu.topology import event
+from ryu.topology.api import get_switch, get_link
+from ryu.controller.handler import set_ev_cls
 from ryu.app.simple_switch_13 import SimpleSwitch13
 import logging
 
-class VL2Controller(SimpleSwitch13):
+class VL2Switch(SimpleSwitch13):
     def __init__(self, *args, **kwargs):
-        # Setup
-        super(VL2Controller, self).__init__(*args, **kwargs)
-        self.logger.info("VL2Controller: Active with VLB Logic")
+        super(VL2Switch, self).__init__(*args, **kwargs)
         self.logger.setLevel(logging.WARNING) # don't print everything
-        print(ryu.topology)
+        self.net_graph = nx.DiGraph()
 
-        # In VL2, we need to know which ports point "UP" to the spine
-        # and which point "DOWN" to hosts.
-        # For simulation simplicity, let's assume specific ports are uplinks.
-        self.UPLINK_PORTS = [21, 22] # Example: Ports connecting ToR to Aggr
+    @set_ev_cls(event.EventSwitchEnter)
+    def handler_switch_enter(self, ev):
+        self._update_topology()
 
-    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
-    def _packet_in_handler(self, ev):
-        # Get info from event
-        msg = ev.msg
-        datapath = msg.datapath
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
-        in_port = msg.match['in_port']
+    @set_ev_cls(event.EventLinkAdd)
+    def handler_link_add(self, ev):
+        self._update_topology()
 
-        # Get packet
-        pkt = packet.Packet(msg.data)
-
-        # Get ethernet info
-        eth = pkt.get_protocols(ethernet.ethernet)[0]
-        dst = eth.dst
-        src = eth.src
-
-        # Intercept IP traffic from hosts
-        is_from_host = (in_port <= 20)
-        if is_from_host and eth.ethertype == ether_types.ETH_TYPE_IP:
-            # Make sure to learn the MAC address
-            dpid = format(datapath.id, 'd').zfill(16)
-            self.mac_to_port.setdefault(dpid, {})
-            self.mac_to_port[dpid][src] = in_port
-
-            # Get the dst port (either its known or need a flood)
-            if dst in self.mac_to_port[dpid]:
-                out_port = self.mac_to_port[dpid][dst]
-            else:
-                out_port = ofproto.OFPP_FLOOD
-
-            
-
-            ip_pkt = pkt.get_protocol(ipv4.ipv4)[0]
-            src_ip = ip_pkt.src
-            dst_ip = ip_pkt.dst
-        else:
-            # All other traffic handle normally
-            super(VL2Controller, self)._packet_in_handler(ev)
-            return
-
-    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
-    def _packet_in_handler(self, ev):
-        msg = ev.msg
-        datapath = msg.datapath
-        ofproto = datapath.ofproto
-        parser = datapath.ofproto_parser
-        in_port = msg.match['in_port']
-
-        pkt = packet.Packet(msg.data)
-        eth = pkt.get_protocols(ethernet.ethernet)[0]
+    def _update_topology(self):
+        # Clear current graph to rebuild (simplest approach)
+        self.net_graph.clear()
         
-        # ALLOW ARP TO FUNCTION NORMALLY (Discovery)
-        # We let the parent class handle ARP so hosts can find MAC addresses.
-        if eth.ethertype == ether_types.ETH_TYPE_ARP:
-            # WARNING: In a real VL2 topology with loops, this needs Spanning Tree 
-            # or an ARP Proxy. For now, we trust Mininet's TTL or linear topology behavior.
-            super(VL2Controller, self)._packet_in_handler(ev)
-            return
+        # Get all switches
+        switch_list = get_switch(self, None)
+        switches = [switch.dp.id for switch in switch_list]
+        self.net_graph.add_nodes_from(switches)
 
-        # INTERCEPT IP TRAFFIC (The VLB Logic)
-        if eth.ethertype == ether_types.ETH_TYPE_IP:
-            ip_pkt = pkt.get_protocol(ipv4.ipv4)[0]
-            src_ip = ip_pkt.src
-            dst_ip = ip_pkt.dst
+        # Get all links
+        link_list = get_link(self, None)
+        links = [(link.src.dpid, link.dst.dpid, {'port': link.src.port_no}) 
+                 for link in link_list]
+        self.net_graph.add_edges_from(links)
 
-            # Logic: If we are a ToR and receiving from a Host, 
-            # pick a RANDOM uplink (VLB).
-            
-            # Simple heuristic: If destination is NOT known in our local L2 table,
-            # it means the destination is likely across the fabric.
-            if eth.dst not in self.mac_to_port.get(datapath.id, {}):
-                
-                # Pick a random uplink to spread traffic
-                out_port = random.choice(self.UPLINK_PORTS)
-                
-                self.logger.info(f"VLB: Routing flow {src_ip}->{dst_ip} on Switch {datapath.id} via Port {out_port}")
-
-                actions = [parser.OFPActionOutput(out_port)]
-
-                # Install a flow for this specific stream so packets stick to this path
-                # We match on IP src/dst to ensure flow consistency
-                match = parser.OFPMatch(in_port=in_port, 
-                                      eth_type=ether_types.ETH_TYPE_IP,
-                                      ipv4_src=src_ip, 
-                                      ipv4_dst=dst_ip)
-                
-                self.add_flow(datapath, 10, match, actions, msg.buffer_id)
-                
-                # We handled the packet, so we return here. 
-                # We DO NOT call super() because we don't want standard L2 learning 
-                # to override our random choice.
-                if msg.buffer_id == ofproto.OFP_NO_BUFFER:
-                    data = msg.data
-                    out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
-                                              in_port=in_port, actions=actions, data=data)
-                    datapath.send_msg(out)
-                return
-
-        # Fallback for local traffic (Host A to Host B on same switch)
-        super(VL2Controller, self)._packet_in_handler(ev)
+        # Print the graph
+        self.logger.info("--- Current Topology ---")
+        self.logger.info("Nodes: %s", self.net_graph.nodes())
+        self.logger.info("Edges: %s", self.net_graph.edges())
