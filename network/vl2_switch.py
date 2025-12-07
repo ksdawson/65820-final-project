@@ -1,179 +1,121 @@
 import random
-from collections import deque
-
-from ryu.ofproto import ether_types
-from ryu.lib.packet import packet, ethernet, ipv4
-
 from ryu.controller import ofp_event
-from ryu.controller.handler import set_ev_cls, CONFIG_DISPATCHER, MAIN_DISPATCHER
+from ryu.controller.handler import MAIN_DISPATCHER, set_ev_cls
+from ryu.lib.packet import packet, ethernet, ether_types, ipv4
+from ryu.app.simple_switch_13 import SimpleSwitch13
+import logging
 
-from ryu.app.simple_switch_13 import SimpleSwitch13  # assuming your base class is here
-
-from ryu.topology import event
-from ryu.topology.api import get_all_link
-
-
-class VLB_SimpleSwitch13(SimpleSwitch13):
-    """
-    Extends SimpleSwitch13 with:
-      - VLB at ToR switches for new host flows
-      - Random intermediate selection per new flow
-      - ECMP to distribute traffic along multiple uplinks to the intermediate
-    """
-
+class VL2Controller(SimpleSwitch13):
     def __init__(self, *args, **kwargs):
-        super(VLB_SimpleSwitch13, self).__init__(*args, **kwargs)
+        # Setup
+        super(VL2Controller, self).__init__(*args, **kwargs)
+        self.logger.info("VL2Controller: Active with VLB Logic")
+        self.logger.setLevel(logging.WARNING) # don't print everything
+        print(ryu.topology)
 
-        # Track the topology
-        self.adjacency = {}       # adjacency[src_dpid][dst_dpid] = port_on_src_to_dst
-        self.datapaths = {}       # dpid -> datapath object
-        self.intermediates = set()  # dpids of intermediate switches
-        self.tors = set()           # dpids of ToR switches
+        # In VL2, we need to know which ports point "UP" to the spine
+        # and which point "DOWN" to hosts.
+        # For simulation simplicity, let's assume specific ports are uplinks.
+        self.UPLINK_PORTS = [21, 22] # Example: Ports connecting ToR to Aggr
 
-        # Optional: mapping host MAC -> ToR dpid
-        self.host_to_tor = {}
-
-    # ----- Track switches as they connect -----
-    @set_ev_cls(ofp_event.EventOFPStateChange, [MAIN_DISPATCHER, CONFIG_DISPATCHER])
-    def _state_change_handler(self, ev):
-        dp = ev.datapath
-        if ev.state == MAIN_DISPATCHER:
-            self.datapaths[dp.id] = dp
-        else:
-            self.datapaths.pop(dp.id, None)
-
-    # ----- Track links to build adjacency -----
-    @set_ev_cls(event.EventLinkAdd)
-    def link_add_handler(self, ev):
-        links = get_all_link(self)
-        self.adjacency = {}
-        for l in links:
-            src = l.src.dpid
-            dst = l.dst.dpid
-            src_port = l.src.port_no
-            self.adjacency.setdefault(src, {})[dst] = src_port
-
-    # ----- Utility: BFS shortest path -----
-    def shortest_path(self, src, dst):
-        q = deque([src])
-        prev = {src: None}
-        while q:
-            u = q.popleft()
-            if u == dst:
-                break
-            for v in self.adjacency.get(u, {}):
-                if v not in prev:
-                    prev[v] = u
-                    q.append(v)
-        if dst not in prev:
-            return None
-        # reconstruct path
-        path = []
-        cur = dst
-        while cur is not None:
-            path.append(cur)
-            cur = prev[cur]
-        path.reverse()
-        return path
-
-    # ----- Helper to create an ECMP group on a switch -----
-    def add_ecmp_group(self, datapath, group_id, port_list):
+    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
+    def _packet_in_handler(self, ev):
+        # Get info from event
+        msg = ev.msg
+        datapath = msg.datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
+        in_port = msg.match['in_port']
 
-        buckets = []
-        for p in port_list:
-            actions = [parser.OFPActionOutput(p)]
-            bucket = parser.OFPBucket(actions=actions)
-            buckets.append(bucket)
+        # Get packet
+        pkt = packet.Packet(msg.data)
 
-        req = parser.OFPGroupMod(datapath, ofproto.OFPGC_ADD,
-                                 ofproto.OFPGT_SELECT, group_id, buckets)
-        datapath.send_msg(req)
+        # Get ethernet info
+        eth = pkt.get_protocols(ethernet.ethernet)[0]
+        dst = eth.dst
+        src = eth.src
 
-    # ----- Override PacketIn handler -----
+        # Intercept IP traffic from hosts
+        is_from_host = (in_port <= 20)
+        if is_from_host and eth.ethertype == ether_types.ETH_TYPE_IP:
+            # Make sure to learn the MAC address
+            dpid = format(datapath.id, 'd').zfill(16)
+            self.mac_to_port.setdefault(dpid, {})
+            self.mac_to_port[dpid][src] = in_port
+
+            # Get the dst port (either its known or need a flood)
+            if dst in self.mac_to_port[dpid]:
+                out_port = self.mac_to_port[dpid][dst]
+            else:
+                out_port = ofproto.OFPP_FLOOD
+
+            
+
+            ip_pkt = pkt.get_protocol(ipv4.ipv4)[0]
+            src_ip = ip_pkt.src
+            dst_ip = ip_pkt.dst
+        else:
+            # All other traffic handle normally
+            super(VL2Controller, self)._packet_in_handler(ev)
+            return
+
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
         msg = ev.msg
         datapath = msg.datapath
-        dpid = datapath.id
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
         in_port = msg.match['in_port']
 
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocols(ethernet.ethernet)[0]
+        
+        # ALLOW ARP TO FUNCTION NORMALLY (Discovery)
+        # We let the parent class handle ARP so hosts can find MAC addresses.
+        if eth.ethertype == ether_types.ETH_TYPE_ARP:
+            # WARNING: In a real VL2 topology with loops, this needs Spanning Tree 
+            # or an ARP Proxy. For now, we trust Mininet's TTL or linear topology behavior.
+            super(VL2Controller, self)._packet_in_handler(ev)
+            return
 
-        if eth.ethertype == ether_types.ETH_TYPE_LLDP:
-            return  # ignore LLDP
+        # INTERCEPT IP TRAFFIC (The VLB Logic)
+        if eth.ethertype == ether_types.ETH_TYPE_IP:
+            ip_pkt = pkt.get_protocol(ipv4.ipv4)[0]
+            src_ip = ip_pkt.src
+            dst_ip = ip_pkt.dst
 
-        dst = eth.dst
-        src = eth.src
+            # Logic: If we are a ToR and receiving from a Host, 
+            # pick a RANDOM uplink (VLB).
+            
+            # Simple heuristic: If destination is NOT known in our local L2 table,
+            # it means the destination is likely across the fabric.
+            if eth.dst not in self.mac_to_port.get(datapath.id, {}):
+                
+                # Pick a random uplink to spread traffic
+                out_port = random.choice(self.UPLINK_PORTS)
+                
+                self.logger.info(f"VLB: Routing flow {src_ip}->{dst_ip} on Switch {datapath.id} via Port {out_port}")
 
-        # Learn MAC → port
-        self.mac_to_port.setdefault(dpid, {})
-        self.mac_to_port[dpid][src] = in_port
+                actions = [parser.OFPActionOutput(out_port)]
 
-        # Track host → ToR
-        if dpid in self.tors:
-            self.host_to_tor[src] = dpid
-
-        # ----- Check if this packet is from a host at a ToR -----
-        if dpid in self.tors and src in self.host_to_tor:
-            # Pick a random intermediate
-            if not self.intermediates:
-                out_port = ofproto.OFPP_FLOOD
-            else:
-                chosen_int = random.choice(list(self.intermediates))
-                path = self.shortest_path(dpid, chosen_int)
-                if path is None or len(path) < 2:
-                    out_port = ofproto.OFPP_FLOOD
-                else:
-                    # ECMP: find all next hops to chosen intermediate (here simplified as all neighbors closer to intermediate)
-                    neighbors = [n for n in self.adjacency[dpid] if n in path]
-                    ports = [self.adjacency[dpid][n] for n in neighbors]
-                    if not ports:
-                        out_port = ofproto.OFPP_FLOOD
-                    else:
-                        # Create ECMP group id based on chosen intermediate
-                        group_id = int(chosen_int)  # simple mapping
-                        self.add_ecmp_group(datapath, group_id, ports)
-                        actions = [parser.OFPActionGroup(group_id)]
-
-                        # Install flow for this new flow
-                        match = parser.OFPMatch(in_port=in_port, eth_src=src, eth_dst=dst)
-                        self.add_flow(datapath, 10, match, actions)
-
-                        # Send PacketOut
-                        data = None
-                        if msg.buffer_id == ofproto.OFP_NO_BUFFER:
-                            data = msg.data
-                        out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
-                                                  in_port=in_port, actions=actions, data=data)
-                        datapath.send_msg(out)
-                        return  # handled, do not continue to normal SimpleSwitch behavior
-
-        # ----- Default SimpleSwitch behavior -----
-        if dst in self.mac_to_port[dpid]:
-            out_port = self.mac_to_port[dpid][dst]
-        else:
-            out_port = ofproto.OFPP_FLOOD
-
-        actions = [parser.OFPActionOutput(out_port)]
-
-        # Install flow for known dst
-        if out_port != ofproto.OFPP_FLOOD:
-            match = parser.OFPMatch(in_port=in_port, eth_src=src, eth_dst=dst)
-            if msg.buffer_id != ofproto.OFP_NO_BUFFER:
-                self.add_flow(datapath, 1, match, actions, msg.buffer_id)
+                # Install a flow for this specific stream so packets stick to this path
+                # We match on IP src/dst to ensure flow consistency
+                match = parser.OFPMatch(in_port=in_port, 
+                                      eth_type=ether_types.ETH_TYPE_IP,
+                                      ipv4_src=src_ip, 
+                                      ipv4_dst=dst_ip)
+                
+                self.add_flow(datapath, 10, match, actions, msg.buffer_id)
+                
+                # We handled the packet, so we return here. 
+                # We DO NOT call super() because we don't want standard L2 learning 
+                # to override our random choice.
+                if msg.buffer_id == ofproto.OFP_NO_BUFFER:
+                    data = msg.data
+                    out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
+                                              in_port=in_port, actions=actions, data=data)
+                    datapath.send_msg(out)
                 return
-            else:
-                self.add_flow(datapath, 1, match, actions)
 
-        data = None
-        if msg.buffer_id == ofproto.OFP_NO_BUFFER:
-            data = msg.data
-
-        out = parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
-                                  in_port=in_port, actions=actions, data=data)
-        datapath.send_msg(out)
+        # Fallback for local traffic (Host A to Host B on same switch)
+        super(VL2Controller, self)._packet_in_handler(ev)
