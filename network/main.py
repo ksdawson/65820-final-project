@@ -1,6 +1,7 @@
 from mininet.net import Mininet
 from mininet.log import setLogLevel
 from mininet.util import dumpNodeConnections
+from mininet.node import RemoteController
 from vl2 import VL2Topo
 
 def send_bytes_dst_to_src(src, dst, byte_count):
@@ -32,8 +33,13 @@ def debug(net):
 def run():
     # Initialize Network
     topo = VL2Topo(D_A=2, D_I=2)
-    net = Mininet(topo=topo)
+    net = Mininet(topo=topo, controller=RemoteController)
+    c0 = net.addController('c0', controller=RemoteController, ip='127.0.0.1', port=6633)
     net.start()
+
+    # Configure OVS to use OpenFlow 1.3
+    t0 = net.get('t0')
+    t0.cmd('ovs-vsctl set bridge s1 protocols=OpenFlow13')
 
     # Debug if needed
     # debug(net)
