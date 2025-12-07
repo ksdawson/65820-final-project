@@ -2,8 +2,7 @@ import sys
 import time
 import re
 from mininet.net import Mininet
-from mininet.node import RemoteController, OVSKernelSwitch
-from mininet.link import TCLink
+from mininet.node import RemoteController
 from mininet.log import setLogLevel, info
 from mininet.cli import CLI
 from vl2 import VL2Topo 
@@ -71,15 +70,24 @@ def test_vlb_logic(net):
     else:
         info('*** FAIL: No uplink traffic detected. Check controller logic or port mapping. ***\n')
 
+def setup_network(D_A=2, D_I=2):
+    # Initialize Network
+    topo = VL2Topo(D_A, D_I)
+    net = Mininet(topo=topo, controller=RemoteController)
+    c0 = net.addController('c0', controller=RemoteController, ip='127.0.0.1', port=6633)
+    net.start()
+
+    # Configure OVS to use OpenFlow 1.3
+    t0 = net.get('t0')
+    t0.cmd('ovs-vsctl set bridge s1 protocols=OpenFlow13')
+
+    return net
+
 def run_verification():
     setLogLevel('info')
     
     # Initialize Topology and Net
-    topo = VL2Topo()
-    net = Mininet(topo=topo, 
-                  controller=RemoteController, 
-                  switch=OVSKernelSwitch,
-                  link=TCLink)
+    net = setup_network()
     
     # Make 'net' globally accessible for the helper function
     sys.modules['__main__'].net = net
@@ -104,9 +112,8 @@ def run_verification():
         test_vlb_logic(net)
         
         # Drop into CLI for manual inspection if needed
-        info('\n*** Running CLI (type "exit" to quit) ***\n')
-        CLI(net)
-        
+        # info('\n*** Running CLI (type "exit" to quit) ***\n')
+        # CLI(net)
     finally:
         info('*** Stopping Network ***\n')
         net.stop()
