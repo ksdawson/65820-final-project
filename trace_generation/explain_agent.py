@@ -9,7 +9,7 @@ from langgraph.graph import StateGraph, MessagesState, START, END
 
 load_dotenv()
 
-llm = ChatOpenAI(model="gpt-4o-mini")
+llm = ChatOpenAI(model="gpt-4o-2024-08-06")
 
 # Global trace storage
 trace_data = []
@@ -21,8 +21,8 @@ def get_next_trace_filename(prefix: str) -> str:
         n += 1
     return f"{prefix}_{n}.json"
 
-# Node ID mapping: 0=user, 1=supervisor, 2=researcher, 3=writer, 4=critic, -1=end
-NODE_IDS = {"user": 0, "supervisor": 1, "researcher": 2, "writer": 3, "critic": 4, "end": -1}
+# Node ID mapping: -1=user, 1=supervisor, 2=researcher, 3=writer, 4=critic, -1=end
+NODE_IDS = {"user": -1, "supervisor": 0, "researcher": 1, "writer": 2, "critic": 3, "end": -1}
 
 def add_trace_entry(sender: int, receiver: list, content: str, llm_gen_time: float):
     """Add an entry to the trace."""
@@ -119,29 +119,14 @@ graph = graph.compile()
 # Run it
 if __name__ == "__main__":
     # Configuration
-    trace_filename = get_next_trace_filename("explain_trace")
-    user_content = "Explain quantum computing"
+    trace_filename = get_next_trace_filename("agent_trace/explain_trace")
+    user_content = "Explain the entire history of the universe"
     
     # Add initial user message to trace
     add_trace_entry(NODE_IDS["user"], [NODE_IDS["supervisor"]], user_content, 0.0)
     
     result = graph.invoke({"messages": [{"role": "user", "content": user_content}]})
     
-    print("\n" + "="*50)
-    print("CONVERSATION TRACE:")
-    print("="*50)
-    for msg in result["messages"]:
-        # Handle both dict and LangChain message objects
-        if hasattr(msg, "type"):
-            role = msg.type
-            content = msg.content
-        else:
-            role = msg.get("role", "unknown")
-            content = msg.get("content", str(msg))
-        print(f"\n[{role.upper()}]: {content}")
-    
     # Save trace to JSON file
     with open(trace_filename, "w") as f:
         json.dump(trace_data, f, indent=2)
-    print(f"\n{'='*50}")
-    print(f"Trace saved to {trace_filename} ({len(trace_data)} entries)")

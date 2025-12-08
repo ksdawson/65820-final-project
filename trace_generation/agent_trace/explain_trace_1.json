@@ -1,0 +1,74 @@
+[
+  {
+    "sender": 0,
+    "receiver": [
+      1
+    ],
+    "time_sent": "2025-12-07T16:35:13.576658",
+    "llm_gen_time": 0.0,
+    "data_size(kb)": 0.0244
+  },
+  {
+    "sender": 1,
+    "receiver": [
+      2
+    ],
+    "time_sent": "2025-12-07T16:35:14.781745",
+    "llm_gen_time": 1.2043,
+    "data_size(kb)": 0.0098
+  },
+  {
+    "sender": 2,
+    "receiver": [
+      1
+    ],
+    "time_sent": "2025-12-07T16:35:21.735030",
+    "llm_gen_time": 6.9522,
+    "data_size(kb)": 2.0322
+  },
+  {
+    "sender": 1,
+    "receiver": [
+      3
+    ],
+    "time_sent": "2025-12-07T16:35:23.681287",
+    "llm_gen_time": 1.945,
+    "data_size(kb)": 0.0059
+  },
+  {
+    "sender": 3,
+    "receiver": [
+      1
+    ],
+    "time_sent": "2025-12-07T16:35:31.975802",
+    "llm_gen_time": 8.294,
+    "data_size(kb)": 2.041
+  },
+  {
+    "sender": 1,
+    "receiver": [
+      4
+    ],
+    "time_sent": "2025-12-07T16:35:33.510435",
+    "llm_gen_time": 1.5335,
+    "data_size(kb)": 0.0059
+  },
+  {
+    "sender": 4,
+    "receiver": [
+      1
+    ],
+    "time_sent": "2025-12-07T16:35:41.395716",
+    "llm_gen_time": 7.8839,
+    "data_size(kb)": 1.7764
+  },
+  {
+    "sender": 1,
+    "receiver": [
+      -1
+    ],
+    "time_sent": "2025-12-07T16:35:41.806947",
+    "llm_gen_time": 0.4102,
+    "data_size(kb)": 0.0059
+  }
+]
