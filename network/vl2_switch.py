@@ -172,29 +172,30 @@ class VL2Switch(app_manager.RyuApp):
         in_port = msg.match['in_port']
         switch_type = self.classify_switch(dpid)
 
-        # Skip LLDP packets as they're used for topology learning
+        # Ignore LLDP packets as they're used for topology learning
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
-            self.logger.info(f"LLDP packet received on {switch_type} switch on {dpid} (Port {in_port})")
+            # self.logger.info(f"LLDP packet received on {switch_type} switch on {dpid} (Port {in_port})")
             return
         src_mac = eth.src
         dst_mac = eth.dst
 
         # Learn the src host location if we haven't seen it
         if src_mac not in self.network_graph:
-            self.network_graph.add_node(src_mac)
+            self.network_graph.add_node(src_mac, type='HOST')
             self.network_graph.add_edge(dpid, src_mac, port=in_port)
             self.network_graph.add_edge(src_mac, dpid) # Return path
-            self.logger.info(f"Src host learned: {src_mac} on Switch {dpid} Port {in_port}")
+            self.logger.info(f" [HOST LEARNED] MAC: {src_mac} attached to Switch: {dpid} Port: {in_port}")
+            self.logger.info(f" Current Graph Nodes: {self.network_graph.nodes()}")
 
         # Need to learn where the host dst is
-        if dst_mac not in self.network_graph:
-            # We don't know where the destination is yet -> FLOOD
-            out = datapath.ofproto_parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
-                                      in_port=in_port, actions=[datapath.ofproto_parser.OFPActionOutput(ofproto.OFPP_FLOOD)],
-                                      data=msg.data)
-            datapath.send_msg(out)
-            self.logger.info(f"Dst host unknown: {dst_mac} on Switch {dpid} Port {in_port}")
-            return
+        # if dst_mac not in self.network_graph:
+        #     # We don't know where the destination is yet -> FLOOD
+        #     out = datapath.ofproto_parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
+        #                               in_port=in_port, actions=[datapath.ofproto_parser.OFPActionOutput(ofproto.OFPP_FLOOD)],
+        #                               data=msg.data)
+        #     datapath.send_msg(out)
+        #     self.logger.info(f"Dst host unknown: {dst_mac} on Switch {dpid} Port {in_port}")
+        #     return
 
         # CHECK: Where am I?
         if switch_type == 'TOR':
