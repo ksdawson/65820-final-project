@@ -25,6 +25,50 @@ class VL2Switch(app_manager.RyuApp):
     # Hardware functions
     ################################################################
 
+    def _send_packet(self, datapath, port, pkt):
+        ofproto = datapath.ofproto
+        parser = datapath.ofproto_parser
+        pkt.serialize()
+        data = pkt.data
+        actions = [parser.OFPActionOutput(port)]
+        out = parser.OFPPacketOut(datapath=datapath, buffer_id=ofproto.OFP_NO_BUFFER,
+                                  in_port=ofproto.OFPP_CONTROLLER, actions=actions, data=data)
+        datapath.send_msg(out)
+
+    def install_path_flow(self, path, ev, dst_mac, src_mac=None):
+        msg = ev.msg
+        parser = msg.datapath.ofproto_parser
+        
+        # We iterate through the path to stitch the rules together
+        # We stop before the last element because the last element is the Host MAC, not a switch
+        for i in range(len(path) - 1):
+            current_node = path[i]
+            next_node = path[i+1]
+            
+            # Skip if current_node is not a switch (just in case)
+            if isinstance(current_node, str): continue
+
+            # Get the Output Port to the next hop
+            out_port = self.network_graph[current_node][next_node]['port']
+            
+            # Get the Datapath object for this switch
+            if current_node not in self.datapaths:
+                self.logger.error(f'Cannot install flow: Datapath {current_node} not found!')
+                continue
+            dp = self.datapaths[current_node]
+            
+            # Create the Flow Match and Actions
+            # Match: Destination MAC (standard L2 forwarding)
+            match = parser.OFPMatch(eth_dst=dst_mac)
+            actions = [parser.OFPActionOutput(out_port)]
+            
+            # Install the Flow
+            self.add_flow(dp, 10, match, actions)
+            
+            # Optimization: If this is the switch holding the packet NOW, send it immediately
+            if current_node == msg.datapath.id:
+                self._send_packet(dp, out_port, packet.Packet(msg.data))
+
     def add_flow(self, datapath, priority, match, actions, buffer_id=None):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
@@ -149,40 +193,6 @@ class VL2Switch(app_manager.RyuApp):
     # Packet handling
     ################################################################
 
-    def install_path_flow(self, path, ev, dst_mac, src_mac=None):
-        msg = ev.msg
-        parser = msg.datapath.ofproto_parser
-        
-        # We iterate through the path to stitch the rules together
-        # We stop before the last element because the last element is the Host MAC, not a switch
-        for i in range(len(path) - 1):
-            current_node = path[i]
-            next_node = path[i+1]
-            
-            # Skip if current_node is not a switch (just in case)
-            if isinstance(current_node, str): continue
-
-            # Get the Output Port to the next hop
-            out_port = self.network_graph[current_node][next_node]['port']
-            
-            # Get the Datapath object for this switch
-            if current_node not in self.datapaths:
-                self.logger.error(f'Cannot install flow: Datapath {current_node} not found!')
-                continue
-            dp = self.datapaths[current_node]
-            
-            # Create the Flow Match and Actions
-            # Match: Destination MAC (standard L2 forwarding)
-            match = parser.OFPMatch(eth_dst=dst_mac)
-            actions = [parser.OFPActionOutput(out_port)]
-            
-            # Install the Flow
-            self.add_flow(dp, 10, match, actions)
-            
-            # Optimization: If this is the switch holding the packet NOW, send it immediately
-            if current_node == msg.datapath.id:
-                self._send_packet(dp, out_port, packet.Packet(msg.data))
-
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
         # Algo: When flow first enters the network (at the src ToR) calculate the entire path
@@ -238,6 +248,22 @@ class VL2Switch(app_manager.RyuApp):
             if is_host:
                 # From host
                 # self.logger.info(f'Packet received from host on ToR switch on {dpid} (Port {in_port})')
+                if dst_mac == 'ff:ff:ff:ff:ff:ff':
+                    self.logger.info(' -> ARP broadcast')
+                    # Flood to all other host ports on this rack (Ports 1-20)
+                    actions = []
+                    for port in range(1, 21):
+                        if port != in_port:
+                            actions.append(datapath.ofproto_parser.OFPActionOutput(port))
+                    
+                    # Send the packet out immediately
+                    out = datapath.ofproto_parser.OFPPacketOut(datapath=datapath, 
+                                              buffer_id=msg.buffer_id,
+                                              in_port=in_port, 
+                                              actions=actions, 
+                                              data=msg.data)
+                    datapath.send_msg(out)
+                    return
 
                 # Install flows for packet
                 if self.network_graph.has_edge(dpid, dst_mac):
