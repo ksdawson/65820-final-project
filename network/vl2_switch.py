@@ -127,4 +127,23 @@ class VL2Switch(app_manager.RyuApp):
         in_port = msg.match['in_port']
 
         # CHECK: Where am I?
-        self.logger.info(f"Packet received on {self.classify_switch(dpid)} SWITCH on {dpid} (Port {in_port})")
+        switch_type = self.classify_switch(dpid)
+        if switch_type == 'TOR':
+            if 1 <= in_port and in_port <= 20:
+                # From host
+                self.logger.info(f"Packet received from host on ToR switch on {dpid} (Port {in_port})")
+            else:
+                # From aggr
+                self.logger.info(f"Packet received from aggr on ToR switch on {dpid} (Port {in_port})")
+        elif switch_type == 'AGGR':
+            if 1 <= in_port and in_port <= 2:
+                # From ToR
+                self.logger.info(f"Packet received from ToR on aggr switch on {dpid} (Port {in_port})")
+            else:
+                # From inter
+                self.logger.info(f"Packet received from inter on aggr switch on {dpid} (Port {in_port})")
+        elif switch_type == 'INTER':
+            # From aggr
+            self.logger.info(f"Packet received from aggr on inter switch on {dpid} (Port {in_port})")
+        else:
+            self.logger.info(f"Packet received on {switch_type} switch on {dpid} (Port {in_port})")
