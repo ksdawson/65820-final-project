@@ -26,6 +26,7 @@ class VL2Topo(Topo):
         self._inter_switches = {f'i{i}': self.addSwitch(f'i{i}', dpid=hex(1000 + i)[2:]) for i in range(num_inter)}
         self._aggr_switches = {f'a{a}': self.addSwitch(f'a{a}', dpid=hex(2000 + a)[2:]) for a in range(num_aggr)}
         self._tor_switches = {f't{t}': self.addSwitch(f't{t}', dpid=hex(3000 + t)[2:]) for t in range(num_tor)}
+        self._hosts = {f'h{h}':self.addHost(f'h{h}') for h in range(num_host)}
 
         # Connect hosts to ToRs
         for t in range(num_tor):
