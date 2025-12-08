@@ -6,6 +6,7 @@ from vl2 import VL2Topo
 import time
 from vl2_perf import run_traffic_test
 from llm import replay_trace
+from multi_llm import run_multi_trace_experiment
 
 def host_hello(net):
     print("*** Making hosts known to network (Sending 1 packet per host)...")
@@ -53,8 +54,17 @@ def run():
     # Run perf test
     # run_traffic_test(net)
 
-    # Test trace
-    replay_trace(net, '../trace_generation/agent_trace/coding_trace_0.json')
+    # Test single trace
+    # replay_trace(net, '../trace_generation/agent_trace/coding_trace_0.json')
+
+    # Test multi trace
+    traces = [
+        '../trace_generation/full_trace/full_explain_trace_0.json',
+        '../trace_generation/full_trace/full_explain_trace_1.json',
+        '../trace_generation/full_trace/full_explain_trace_2.json',
+        '../trace_generation/full_trace/full_explain_trace_3.json'
+    ]
+    run_multi_trace_experiment(net, traces)
 
     # Stop network
     net.stop()
