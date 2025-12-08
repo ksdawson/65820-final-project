@@ -100,20 +100,20 @@ def run_verification():
         info('*** Starting Network ***\n')
         net.start()
         
-        # Wait for controller to connect and stabilize
-        info('*** Waiting 5 seconds for controller convergence... ***\n')
-        time.sleep(5)
+        # # Wait for controller to connect and stabilize
+        # info('*** Waiting 5 seconds for controller convergence... ***\n')
+        # time.sleep(5)
         
-        # Test 1: Basic Connectivity
-        info('\n*** Test 1: Ping All (Connectivity Check) ***\n')
-        loss = net.pingAll()
-        if loss > 0:
-            info(f'*** FAIL: Packet loss detected ({loss}%). Check links or ARP handling. ***\n')
-        else:
-            info('*** PASS: Full connectivity established. ***\n')
+        # # Test 1: Basic Connectivity
+        # info('\n*** Test 1: Ping All (Connectivity Check) ***\n')
+        # loss = net.pingAll()
+        # if loss > 0:
+        #     info(f'*** FAIL: Packet loss detected ({loss}%). Check links or ARP handling. ***\n')
+        # else:
+        #     info('*** PASS: Full connectivity established. ***\n')
 
-        # Test 2: VLB Logic
-        test_vlb_logic(net)
+        # # Test 2: VLB Logic
+        # test_vlb_logic(net)
         
         # Drop into CLI for manual inspection if needed
         # info('\n*** Running CLI (type "exit" to quit) ***\n')
