@@ -36,23 +36,30 @@ def process_agent_trace(trace_path: str, output_path: str):
         trace: list[dict] = json.load(f)
 
     senders = {}
-    types = ["pipeline", "hybrid"]
+    types = ["pipeline", "hybrid", "tensor"]
 
     for entry in trace:
         if entry["sender"] not in senders and entry["sender"] != -1:
             senders[entry["sender"]] = random.choice(types)
 
     nodes = {}
+    tensor_senders = set()  # Track tensor parallelism senders
+    hybrid_senders = set()  # Track hybrid parallelism senders
 
     for sender, sendertype in senders.items():
         if sendertype == "pipeline":
             nodes[sender] = [(str(sender+i/10), 1) for i in range(8)]
         elif sendertype == "hybrid":
-            nodes[sender] = [(str(sender+i/10), 2) for i in range(4)]
+            # 8 nodes with 1 GPU each, organized as 4 groups of 2
+            nodes[sender] = [(str(sender+i/10), 1) for i in range(8)]
+            hybrid_senders.add(sender)
         elif sendertype == "tensor":
-            nodes[sender] = [(str(sender+.1), 8)]
+            # 8 separate nodes with 1 GPU each, like pipeline
+            nodes[sender] = [(str(sender+i/10), 1) for i in range(8)]
+            tensor_senders.add(sender)
 
-    full_trace = []
+    # First element must be the nodes dictionary for server_management.py compatibility
+    full_trace = [nodes]
     input_size = 0
     cumulative_time = 0  # Track cumulative time in seconds
 
@@ -64,30 +71,116 @@ def process_agent_trace(trace_path: str, output_path: str):
         message_pattern = get_message_size_and_interval(input_size, entry["data_size(kb)"], entry['llm_gen_time'], len(nodes[entry["sender"]]))
         node_list = nodes[entry["sender"]]
         num_nodes = len(node_list)
+        is_tensor = entry["sender"] in tensor_senders
+        is_hybrid = entry["sender"] in hybrid_senders
 
         full_entry = {}
         local_time = 0  # Time within this entry (seconds)
 
-        for i in range(num_nodes-1):
-            local_time += message_pattern["prefill_interval"]
-            full_entry = {
-                "sender": node_list[i][0],
-                "receiver": [node_list[i+1][0]],
-                "time": cumulative_time + local_time,
-                "size": message_pattern["prefill_size"],
-            }
-            full_trace.append(full_entry)
+        if is_tensor:
+            # TENSOR PARALLELISM: All-to-all communication
+            # Each node sends to ALL other nodes - creates n*(n-1) messages per step
+            
+            # Prefill phase: all-to-all sync at each step
+            for step in range(num_nodes):
+                local_time += message_pattern["prefill_interval"]
+                for i in range(num_nodes):
+                    for j in range(num_nodes):
+                        if i != j:
+                            full_entry = {
+                                "sender": node_list[i][0],
+                                "receiver": [node_list[j][0]],
+                                "time": cumulative_time + local_time,
+                                "size": message_pattern["prefill_size"] // num_nodes,
+                            }
+                            full_trace.append(full_entry)
 
-        while local_time + message_pattern["decode_interval"] < entry['llm_gen_time']:
-            local_time += message_pattern["decode_interval"]
+            # Decode phase: all-to-all sync every token
+            while local_time + message_pattern["decode_interval"] < entry['llm_gen_time']:
+                local_time += message_pattern["decode_interval"]
+                for i in range(num_nodes):
+                    for j in range(num_nodes):
+                        if i != j:
+                            full_entry = {
+                                "sender": node_list[i][0],
+                                "receiver": [node_list[j][0]],
+                                "time": cumulative_time + local_time,
+                                "size": message_pattern["decode_size"],
+                            }
+                            full_trace.append(full_entry)
+
+        elif is_hybrid:
+            # HYBRID PARALLELISM: 4 groups of 2 nodes
+            # All-to-all within each group (each node sends to the other in its group)
+            # Groups: [0,1], [2,3], [4,5], [6,7]
+            groups = [
+                (node_list[0], node_list[1]),
+                (node_list[2], node_list[3]),
+                (node_list[4], node_list[5]),
+                (node_list[6], node_list[7]),
+            ]
+            
+            # Prefill phase: all-to-all within each group at each step
+            for step in range(num_nodes):
+                local_time += message_pattern["prefill_interval"]
+                for group in groups:
+                    # All-to-all within group (2 nodes → 2 messages per group)
+                    full_entry = {
+                        "sender": group[0][0],
+                        "receiver": [group[1][0]],
+                        "time": cumulative_time + local_time,
+                        "size": message_pattern["prefill_size"] // num_nodes,
+                    }
+                    full_trace.append(full_entry)
+                    full_entry = {
+                        "sender": group[1][0],
+                        "receiver": [group[0][0]],
+                        "time": cumulative_time + local_time,
+                        "size": message_pattern["prefill_size"] // num_nodes,
+                    }
+                    full_trace.append(full_entry)
+
+            # Decode phase: all-to-all within each group every token
+            while local_time + message_pattern["decode_interval"] < entry['llm_gen_time']:
+                local_time += message_pattern["decode_interval"]
+                for group in groups:
+                    full_entry = {
+                        "sender": group[0][0],
+                        "receiver": [group[1][0]],
+                        "time": cumulative_time + local_time,
+                        "size": message_pattern["decode_size"],
+                    }
+                    full_trace.append(full_entry)
+                    full_entry = {
+                        "sender": group[1][0],
+                        "receiver": [group[0][0]],
+                        "time": cumulative_time + local_time,
+                        "size": message_pattern["decode_size"],
+                    }
+                    full_trace.append(full_entry)
+
+        else:
+            # PIPELINE: Sequential communication
             for i in range(num_nodes-1):
+                local_time += message_pattern["prefill_interval"]
                 full_entry = {
                     "sender": node_list[i][0],
                     "receiver": [node_list[i+1][0]],
                     "time": cumulative_time + local_time,
-                    "size": message_pattern["decode_size"],
+                    "size": message_pattern["prefill_size"],
                 }
                 full_trace.append(full_entry)
+
+            while local_time + message_pattern["decode_interval"] < entry['llm_gen_time']:
+                local_time += message_pattern["decode_interval"]
+                for i in range(num_nodes-1):
+                    full_entry = {
+                        "sender": node_list[i][0],
+                        "receiver": [node_list[i+1][0]],
+                        "time": cumulative_time + local_time,
+                        "size": message_pattern["decode_size"],
+                    }
+                    full_trace.append(full_entry)
 
         full_trace.append({
             "sender": node_list[-1][0],
@@ -102,7 +195,8 @@ def process_agent_trace(trace_path: str, output_path: str):
     with open(output_path, "w") as f:
         json.dump(full_trace, f, indent=4)
 
-    total_size = sum(entry["size"] for entry in full_trace)
+    # Skip first entry (nodes dict) when calculating total size
+    total_size = sum(entry["size"] for entry in full_trace[1:])
     return len(full_trace), total_size
 
 
