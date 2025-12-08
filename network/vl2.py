@@ -40,8 +40,8 @@ class VL2Topo(Topo):
                 host = self._hosts[f'h{t*20+h}']
                 self.addLink(host, tor, cls=TCLink,
                     bw=server_link, # Mbps
-                    delay=LOSS,
-                    loss=DELAY, # %
+                    delay=DELAY,
+                    loss=LOSS, # %
                     max_queue_size=QUEUE_SIZE # num packets
                 )
         # Connect ToRs to aggregate switches
