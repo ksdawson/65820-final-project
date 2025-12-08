@@ -131,7 +131,8 @@ def map_processes_to_hosts(net, all_logical_processes, percent_usage, procs_per_
     return mapping
 
 def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_host=8, 
-                                num_server_ports=16, time_scale=1.0, max_events=None):
+                                num_server_ports=16, time_scale=1.0, max_events=None,
+                                cleanup_interval=10000):
     '''
     Run a multi-trace experiment on the network.
     
@@ -143,6 +144,7 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
         num_server_ports: Number of iperf3 server ports per host (for concurrency)
         time_scale: Timing scale factor (0.0 = no delays/fastest, 1.0 = real-time accurate replay)
         max_events: Maximum number of events to process (None = all events)
+        cleanup_interval: Clean up finished iperf3 processes every N events (0 = disabled)
     '''
     
     # 0. Setup Logging
@@ -183,6 +185,15 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
     last_progress_time = start_wall_time
 
     for i, event in enumerate(events):
+        # --- Periodic Cleanup: Kill FINISHED iperf3 client processes ---
+        # Wait 3 seconds first to let in-flight flows complete (max flow time ~2s)
+        # This keeps the system responsive without killing active transfers
+        if cleanup_interval > 0 and (i + 1) % cleanup_interval == 0:
+            info(f'*** Waiting 3s for in-flight flows, then cleaning up... ***\n')
+            time.sleep(3)  # Wait for recent flows to finish
+            for h in net.hosts:
+                h.cmd('pkill -9 -f "iperf3 -c" 2>/dev/null || true')
+        
         # --- Timing (only if time_scale > 0) ---
         if time_scale > 0:
             target_delay = (event.get('time', 0.0) - first_event_time) * time_scale
