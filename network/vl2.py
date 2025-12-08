@@ -28,6 +28,11 @@ class VL2Topo(Topo):
         self._tor_switches = {f't{t}': self.addSwitch(f't{t}', dpid=hex(3000 + t)[2:]) for t in range(num_tor)}
         self._hosts = {f'h{h}':self.addHost(f'h{h}') for h in range(num_host)}
 
+        # Link parameters
+        LOSS = 1e-12
+        DELAY = '50us'
+        QUEUE_SIZE = 1000
+
         # Connect hosts to ToRs
         for t in range(num_tor):
             tor = self._tor_switches[f't{t}']
@@ -35,22 +40,22 @@ class VL2Topo(Topo):
                 host = self._hosts[f'h{t*20+h}']
                 self.addLink(host, tor, cls=TCLink,
                     bw=server_link, # Mbps
-                    delay='0ms',
-                    loss=1, # %
-                    max_queue_size=100 # num packets
+                    delay=LOSS,
+                    loss=DELAY, # %
+                    max_queue_size=QUEUE_SIZE # num packets
                 )
         # Connect ToRs to aggregate switches
         for t in range(2*num_tor):
             # Connects to two aggr
             tor = self._tor_switches[f't{t//2}']
             aggr = self._aggr_switches[f'a{t%num_aggr}']
-            self.addLink(tor, aggr, cls=TCLink, bw=switch_link, delay='0ms', loss=1, max_queue_size=100)
+            self.addLink(tor, aggr, cls=TCLink, bw=switch_link, delay=DELAY, loss=LOSS, max_queue_size=QUEUE_SIZE)
         # Connect aggregate to intermediate switches
         for a in range(D_A//2*num_aggr):
             # Connects to D_A/2 inter
             aggr = self._aggr_switches[f'a{a//(D_A//2)}']
             inter = self._inter_switches[f'i{a%num_inter}']
-            self.addLink(aggr, inter, cls=TCLink, bw=switch_link, delay='0ms', loss=1, max_queue_size=100)
+            self.addLink(aggr, inter, cls=TCLink, bw=switch_link, delay=DELAY, loss=LOSS, max_queue_size=QUEUE_SIZE)
 
 if __name__ == '__main__':
     # Make VL2 networks
