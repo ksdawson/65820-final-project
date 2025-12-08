@@ -14,15 +14,19 @@ def setup_network():
     # Start network first
     net.start()
 
+    # Enable STP on all switches to prevent broadcast storms from loops
+    for switch in net.switches:
+        switch.cmd('ovs-vsctl set bridge {} stp_enable=true'.format(switch.name))
+
     return net
 
 def run():
     # Initialize Network
     net = setup_network()
 
-    # Wait for switches to connect to controller
-    print("*** Waiting for switches to connect to controller...")
-    time.sleep(3)
+    # Wait for switches to connect to controller and STP to converge
+    print("*** Waiting for switches to connect and STP to converge...")
+    time.sleep(35)  # STP needs ~30s to converge
 
     # Test
     net.pingAll()
