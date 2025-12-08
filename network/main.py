@@ -4,20 +4,30 @@ from mininet.node import RemoteController
 from mininet.cli import CLI
 from vl2 import VL2Topo
 import time
+from vl2_perf import run_traffic_test
+
+def host_hello(net):
+    print("*** Making hosts known to network (Sending 1 packet per host)...")
+    for host in net.hosts:
+        # Send a single ping to a dummy IP
+        # The '&' runs it in the background so we don't wait for timeout
+        host.cmd('ping -c 1 10.255.255.255 &') 
+    
+    # Give the controller a moment to process the flood of PacketIns
+    time.sleep(2) 
+    print("*** Network warmed up. Controller graph populated.")
 
 def setup_network():
     # Initialize Network
-    topo = VL2Topo(D_A=2, D_I=2)
-    net = Mininet(topo=topo, controller=None)  # Don't add default controller
+    topo = VL2Topo(D_A=4, D_I=4)
+    net = Mininet(topo=topo, controller=None) # Don't add default controller
     net.addController('c0', controller=RemoteController, ip='127.0.0.1', port=6633)
 
     # Start network first
     net.start()
 
-    # Enable STP on all switches to prevent broadcast storms from loops
-    # Also set OpenFlow 1.3 for compatibility with sanity_check.py
+    # Set OpenFlow 1.3 for compatibility with ryu controllers
     for switch in net.switches:
-        switch.cmd('ovs-vsctl set bridge {} stp_enable=true'.format(switch.name))
         switch.cmd('ovs-vsctl set bridge {} protocols=OpenFlow13'.format(switch.name))
 
     return net
@@ -26,15 +36,21 @@ def run():
     # Initialize Network
     net = setup_network()
 
-    # Wait for switches to connect to controller and STP to converge
-    print("*** Waiting for switches to connect and STP to converge...")
-    time.sleep(5) # STP needs ~5s to converge
+    # Wait for switches to connect to controller
+    print("*** Waiting for switches to connect...")
+    time.sleep(5)
+
+    # Make hosts known to the network
+    host_hello(net)
 
     # Test
     # net.pingAll()
 
     # Drop into CLI for manual testing
-    CLI(net)
+    # CLI(net)
+
+    # Run perf test
+    run_traffic_test(net)
 
     # Stop network
     net.stop()
