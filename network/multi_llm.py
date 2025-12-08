@@ -117,129 +117,122 @@ def map_processes_to_hosts(net, all_logical_processes, percent_usage, procs_per_
 
     return mapping
 
-def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_host=8, 
-                               random_sample_n=None, shuffle_mapping=True):
+def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_host=8):
     
-    # 0. Setup Logging Directory
+    # 0. Setup Logging
     log_dir = '/tmp/mininet_metrics'
     os.system(f'rm -rf {log_dir}')
     os.system(f'mkdir -p {log_dir}')
     
-    # 1. Load Data (Namespaced)
+    # 1. Load Traces
     all_logical_procs, events = load_and_merge_traces(trace_file_paths)
-    if not all_logical_procs:
-        return
-
-    # 2. Start Servers
-    info('*** Starting Traffic Listeners... ***\n')
-    for h in net.hosts:
-        h.cmd('python3 traffic_tool.py -m server -p 8000 &')
-    time.sleep(1)
-
-    # 3. Compute Mapping
     host_map = map_processes_to_hosts(net, all_logical_procs, percentage, procs_per_host)
 
-    # 4. Replay Loop
-    info(f'*** Starting Replay... Logging to {log_dir} ***\n')
+    # 2. Start iperf3 Servers (Daemon Mode)
+    info('*** Starting iperf3 Servers... ***\n')
+    for h in net.hosts:
+        # -s: Server
+        # -p 5201: Port (Default)
+        # -D: Run as Daemon (background process automatically)
+        # --logfile: Redirect server errors to /dev/null to keep screen clean
+        h.cmd('iperf3 -s -p 5201 -D --logfile /dev/null')
     
+    time.sleep(1) # Quick wait for daemons to spin up
+
+    # 3. Replay Loop
+    info(f'*** Replaying {len(events)} events using iperf3... ***\n')
     start_wall_time = time.time()
-    if events:
-        first_event_time = events[0].get('time', 0.0)
+    if events: first_event_time = events[0].get('time', 0.0)
 
     for i, event in enumerate(events):
-        # Timing
-        event_time = event.get('time', 0.0)
-        target_delay = event_time - first_event_time
+        # --- Timing ---
+        target_delay = event.get('time', 0.0) - first_event_time
         current_delay = time.time() - start_wall_time
-        
         if target_delay > current_delay:
             time.sleep(target_delay - current_delay)
-            
-        # Execution
+
+        # --- Setup ---
         sender_name = event.get('sender')
         receivers = event.get('receiver', [])
-        size_bytes = int(event.get('size', 0))
+        size_bytes = int(event.get('size', 1024)) # Default 1KB
+        if size_bytes < 1: size_bytes = 1024
 
         if sender_name not in host_map: continue
         phys_sender = host_map[sender_name]
-        
+
         for rx_name in receivers:
             if rx_name not in host_map: continue
             phys_rx = host_map[rx_name]
             if phys_sender == phys_rx: continue
             
-            # --- CHANGED: REDIRECT OUTPUT TO LOG FILE ---
-            # We append (>>) to a log file named after the sender host
-            # log_file = f'{log_dir}/{phys_sender.name}.log'
-            log_file = f'{log_dir}/{i}_{sender_name}_to_{rx_name}.log'
+            # --- The Robust Command ---
+            # Unique log file per flow (CRITICAL for concurrency)
+            log_file = f'{log_dir}/{i}_{sender_name}_to_{rx_name}.json'
             
-            cmd = (f'python3 traffic_tool.py -m client '
-                   f'-t {phys_rx.IP()} -p 8000 -b {size_bytes} '
-                   f'>> {log_file} 2>&1 &') # Redirect stdout and stderr
+            # iperf3 flags:
+            # -c: Client (connect to host)
+            # -n: Number of bytes to transmit (matches your trace)
+            # -J: JSON output (Clean data!)
+            # -p: Port
+            cmd = (f'iperf3 -c {phys_rx.IP()} -p 5201 '
+                   f'-n {size_bytes} -J '
+                   f'> {log_file} 2>&1 &')
             
             phys_sender.cmd(cmd)
 
-    # 5. Wait for stragglers
-    info('*** Replay finished. Waiting 5s for pending flows... ***\n')
-    time.sleep(5)
+    info('*** Replay finished. Waiting 10s for stragglers... ***\n')
+    time.sleep(10)
     
-    # 6. Cleanup
+    # 4. Cleanup
     for h in net.hosts:
-        h.cmd('killall -9 python3')
+        h.cmd('killall -9 iperf3')
+    
+    # 5. Analyze
+    analyze_iperf_results(log_dir)
 
-    # 7. ANALYZE METRICS
-    analyze_results(log_dir)
-
-def analyze_results(log_dir):
+def analyze_iperf_results(log_dir):
     info('\n' + '='*40 + '\n')
-    info('   EXPERIMENT RESULTS   \n')
+    info('   IPERF3 EXPERIMENT RESULTS   \n')
     info('='*40 + '\n')
     
     fcts = []
-    throughputs = []
-    bytes_transmitted = []
+    total_bytes = 0
     errors = 0
-    total_flows = 0
     
-    log_files = glob.glob(f'{log_dir}/*.log')
+    # Robust Globbing
+    log_files = glob.glob(f'{log_dir}/*.json')
     
     for log_f in log_files:
-        with open(log_f, 'r') as f:
-            for line in f:
-                try:
-                    data = json.loads(line)
-                    if data.get('event') == 'flow_complete':
-                        fcts.append(data['duration_sec'])
-                        throughputs.append(data['throughput_mbps'])
-                        bytes_transmitted.append(data['bytes'])
-                        total_flows += 1
-                    elif data.get('event') == 'error':
-                        errors += 1
-                except:
-                    pass # Ignore non-json lines
+        try:
+            with open(log_f, 'r') as f:
+                data = json.load(f)
+                
+                # iperf3 JSON structure is standard:
+                # data['end']['sum_sent']['seconds'] is the duration
+                # data['end']['sum_sent']['bytes'] is the total bytes
+                
+                if 'error' in data:
+                    errors += 1
+                    continue
                     
-    if total_flows == 0:
-        info('No successful flows recorded.\n')
+                duration = data['end']['sum_sent']['seconds']
+                b_sent = data['end']['sum_sent']['bytes']
+                
+                fcts.append(duration)
+                total_bytes += b_sent
+        except Exception:
+            # File might be empty if iperf crashed or was killed
+            errors += 1
+            
+    if not fcts:
+        info('No successful flows found.\n')
         return
 
-    # Calculate Statistics
     fcts = np.array(fcts)
     
-    info(f'Total Flows:       {total_flows}\n')
-    info(f'Failed/Error:      {errors}\n')
-    info('-' * 20 + '\n')
-    
-    # Flow Completion Time (Lower is Better)
+    info(f'Total Flows:       {len(fcts)}\n')
+    info(f'Errors/Empty:      {errors}\n')
     info(f'Avg FCT:           {np.mean(fcts)*1000:.2f} ms\n')
-    info(f'P50 FCT (Median):  {np.percentile(fcts, 50)*1000:.2f} ms\n')
-    info(f'P99 FCT (Tail):    {np.percentile(fcts, 99)*1000:.2f} ms\n')
-    info(f'Max FCT:           {np.max(fcts)*1000:.2f} ms\n')
-    
-    info('-' * 20 + '\n')
-    # Throughput (Higher is Better)
-    info(f'Avg Throughput:    {np.mean(throughputs):.2f} Mbps\n')
-
-    # Total bytes transferred
-    info(f'Total bytes:       {np.sum(bytes_transmitted):.2f} B\n')
-
+    info(f'P99 FCT:           {np.percentile(fcts, 99)*1000:.2f} ms\n')
+    info(f'Total Vol:         {total_bytes / 1e6:.2f} MB\n')
     info('='*40 + '\n')
