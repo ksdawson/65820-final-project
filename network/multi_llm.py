@@ -130,7 +130,8 @@ def map_processes_to_hosts(net, all_logical_processes, percent_usage, procs_per_
 
     return mapping
 
-def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_host=8, num_server_ports=16):
+def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_host=8, 
+                                num_server_ports=16, time_scale=1.0, max_events=None):
     '''
     Run a multi-trace experiment on the network.
     
@@ -140,6 +141,8 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
         percentage: Fraction of physical hosts to use (0.0 to 1.0)
         procs_per_host: Max logical processes per physical host
         num_server_ports: Number of iperf3 server ports per host (for concurrency)
+        time_scale: Timing scale factor (0.0 = no delays/fastest, 1.0 = real-time accurate replay)
+        max_events: Maximum number of events to process (None = all events)
     '''
     
     # 0. Setup Logging
@@ -149,6 +152,12 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
     
     # 1. Load Traces
     all_logical_procs, events = load_and_merge_traces(trace_file_paths)
+    
+    # Limit events if specified
+    if max_events is not None and max_events < len(events):
+        info(f'*** Limiting to first {max_events} events (out of {len(events)}) ***\n')
+        events = events[:max_events]
+    
     host_map = map_processes_to_hosts(net, all_logical_procs, percentage, procs_per_host)
 
     # 2. Start MULTIPLE iperf3 Servers per host (to handle concurrent connections)
@@ -163,7 +172,7 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
     time.sleep(2)  # Wait for daemons to spin up
 
     # 3. Replay Loop
-    info(f'*** Replaying {len(events)} events using iperf3... ***\n')
+    info(f'*** Replaying {len(events)} events (time_scale={time_scale})... ***\n')
     start_wall_time = time.time()
     if events: first_event_time = events[0].get('time', 0.0)
     
@@ -171,13 +180,15 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
     host_port_counter = {}  # host_name -> next port offset to use
     flows_started = 0
     flows_skipped = 0
+    last_progress_time = start_wall_time
 
     for i, event in enumerate(events):
-        # --- Timing ---
-        target_delay = event.get('time', 0.0) - first_event_time
-        current_delay = time.time() - start_wall_time
-        if target_delay > current_delay:
-            time.sleep(target_delay - current_delay)
+        # --- Timing (only if time_scale > 0) ---
+        if time_scale > 0:
+            target_delay = (event.get('time', 0.0) - first_event_time) * time_scale
+            current_delay = time.time() - start_wall_time
+            if target_delay > current_delay:
+                time.sleep(target_delay - current_delay)
 
         # --- Setup ---
         sender_name = event.get('sender')
@@ -223,13 +234,22 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
             phys_sender.cmd(cmd)
             flows_started += 1
         
-        # Progress indicator every 10000 events
-        if (i + 1) % 10000 == 0:
-            info(f'*** Progress: {i+1}/{len(events)} events processed ***\n')
+        # Progress indicator every 1000 events OR every 5 seconds
+        now = time.time()
+        if (i + 1) % 1000 == 0 or (now - last_progress_time) > 5:
+            elapsed = now - start_wall_time
+            rate = (i + 1) / elapsed if elapsed > 0 else 0
+            eta = (len(events) - i - 1) / rate if rate > 0 else 0
+            info(f'*** Progress: {i+1}/{len(events)} ({100*(i+1)/len(events):.1f}%) - {rate:.0f} evt/s - ETA: {eta:.0f}s ***\n')
+            last_progress_time = now
 
-    info(f'*** Replay finished. Started {flows_started} flows, skipped {flows_skipped}. ***\n')
-    info('*** Waiting 30s for flows to complete... ***\n')
-    time.sleep(30)  # Increased wait time for many concurrent flows
+    elapsed_total = time.time() - start_wall_time
+    info(f'*** Replay finished in {elapsed_total:.1f}s. Started {flows_started} flows, skipped {flows_skipped}. ***\n')
+    
+    # Wait time proportional to flows started (minimum 10s, max 60s)
+    wait_time = min(60, max(10, flows_started // 1000))
+    info(f'*** Waiting {wait_time}s for flows to complete... ***\n')
+    time.sleep(wait_time)
     
     # 4. Cleanup
     for h in net.hosts:
