@@ -10,6 +10,9 @@ def run():
     c0 = net.addController('c0', controller=RemoteController, ip='127.0.0.1', port=6633, protocols='OpenFlow13')
     net.start()
 
+    # Test
+    net.pingAll()
+
     # Stop the network when done
     net.stop()
 
