@@ -7,6 +7,26 @@ import time
 from vl2_perf import run_traffic_test
 from llm import replay_trace
 from multi_llm import run_multi_trace_experiment
+import os
+
+PRIORITY_QUEUE = False
+
+def configure_priority_queues(net):
+    print("*** Configuring Priority Queues on Switches ***")
+    for switch in net.switches:
+        for intf in switch.intfList():
+            if intf.name == 'lo': continue
+            
+            # OVS Command to create specific QoS queues
+            # We use linux-htb. 
+            # priority=1 is HIGHER than priority=2 in HTB config
+            cmd = (
+                f"ovs-vsctl -- set Port {intf.name} qos=@newqos -- "
+                f"--id=@newqos create QoS type=linux-htb other-config:max-rate=1000000000 queues=0=@q0,1=@q1 -- "
+                f"--id=@q0 create Queue other-config:min-rate=10000000 other-config:priority=2 -- " # Low Priority
+                f"--id=@q1 create Queue other-config:min-rate=10000000 other-config:priority=1"    # High Priority
+            )
+            os.system(cmd)
 
 def host_hello(net):
     print("*** Making hosts known to network (Sending 1 packet per host)...")
@@ -31,6 +51,10 @@ def setup_network():
     # Set OpenFlow 1.3 for compatibility with ryu controllers
     for switch in net.switches:
         switch.cmd('ovs-vsctl set bridge {} protocols=OpenFlow13'.format(switch.name))
+
+    # Setup priority queues
+    if PRIORITY_QUEUE:
+        configure_priority_queues(net)
 
     return net
 
