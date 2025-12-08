@@ -4,6 +4,7 @@ from mininet.node import RemoteController
 from mininet.cli import CLI
 from vl2 import VL2Topo
 import time
+from vl2_perf import run_traffic_test
 
 def host_hello(net):
     print("*** Making hosts known to network (Sending 1 packet per host)...")
@@ -46,7 +47,10 @@ def run():
     # net.pingAll()
 
     # Drop into CLI for manual testing
-    CLI(net)
+    # CLI(net)
+
+    # Run perf test
+    run_traffic_test(net)
 
     # Stop network
     net.stop()
