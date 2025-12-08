@@ -2,6 +2,9 @@ import json
 import time
 import math
 import random
+import os
+import numpy as np
+import glob
 from mininet.log import info, error
 
 def load_and_merge_traces(trace_files):
@@ -114,7 +117,72 @@ def map_processes_to_hosts(net, all_logical_processes, percent_usage, procs_per_
 
     return mapping
 
-def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_host=8):
+# def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_host=8):
+#     # 1. Load Data (Namespaced)
+#     all_logical_procs, events = load_and_merge_traces(trace_file_paths)
+#     if not all_logical_procs:
+#         return
+
+#     # 2. Start Servers
+#     info("*** Starting Traffic Listeners... ***\n")
+#     for h in net.hosts:
+#         h.cmd('python3 traffic_tool.py -m server -p 8000 &')
+#     time.sleep(1) 
+
+#     # 3. Compute Mapping
+#     host_map = map_processes_to_hosts(net, all_logical_procs, percentage, procs_per_host)
+
+#     # 4. Replay Loop
+#     info(f"*** Starting Replay of {len(events)} events... ***\n")
+    
+#     start_wall_time = time.time()
+#     first_event_time = events[0].get('time', 0.0)
+
+#     for i, event in enumerate(events):
+#         # Timing
+#         event_time = event.get('time', 0.0)
+#         target_delay = event_time - first_event_time
+#         current_delay = time.time() - start_wall_time
+        
+#         if target_delay > current_delay:
+#             time.sleep(target_delay - current_delay)
+            
+#         # Execution
+#         sender_name = event.get('sender')     
+#         receivers = event.get('receiver', []) 
+#         size_bytes = int(event.get('size', 0))
+
+#         if sender_name not in host_map:
+#             continue
+            
+#         phys_sender = host_map[sender_name]
+        
+#         for rx_name in receivers:
+#             if rx_name not in host_map:
+#                 continue
+#             phys_rx = host_map[rx_name]
+            
+#             # Optimization: Skip loopback (optional)
+#             if phys_sender == phys_rx: continue
+                
+#             cmd = (f'python3 traffic_tool.py -m client '
+#                    f'-t {phys_rx.IP()} -p 8000 -b {size_bytes} &')
+#             phys_sender.cmd(cmd)
+            
+#     # Cleanup
+#     time.sleep(2)
+#     info("*** Replay Complete. Killing servers. ***\n")
+#     for h in net.hosts:
+#         h.cmd('killall -9 python3')
+
+def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_host=8, 
+                               random_sample_n=None, shuffle_mapping=True):
+    
+    # 0. Setup Logging Directory
+    log_dir = "/tmp/mininet_metrics"
+    os.system(f"rm -rf {log_dir}")
+    os.system(f"mkdir -p {log_dir}")
+    
     # 1. Load Data (Namespaced)
     all_logical_procs, events = load_and_merge_traces(trace_file_paths)
     if not all_logical_procs:
@@ -124,16 +192,17 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
     info("*** Starting Traffic Listeners... ***\n")
     for h in net.hosts:
         h.cmd('python3 traffic_tool.py -m server -p 8000 &')
-    time.sleep(1) 
+    time.sleep(1)
 
     # 3. Compute Mapping
     host_map = map_processes_to_hosts(net, all_logical_procs, percentage, procs_per_host)
 
     # 4. Replay Loop
-    info(f"*** Starting Replay of {len(events)} events... ***\n")
+    info(f"*** Starting Replay... Logging to {log_dir} ***\n")
     
     start_wall_time = time.time()
-    first_event_time = events[0].get('time', 0.0)
+    if events:
+        first_event_time = events[0].get('time', 0.0)
 
     for i, event in enumerate(events):
         # Timing
@@ -145,29 +214,83 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
             time.sleep(target_delay - current_delay)
             
         # Execution
-        sender_name = event.get('sender')     
-        receivers = event.get('receiver', []) 
+        sender_name = event.get('sender')
+        receivers = event.get('receiver', [])
         size_bytes = int(event.get('size', 0))
 
-        if sender_name not in host_map:
-            continue
-            
+        if sender_name not in host_map: continue
         phys_sender = host_map[sender_name]
         
         for rx_name in receivers:
-            if rx_name not in host_map:
-                continue
+            if rx_name not in host_map: continue
             phys_rx = host_map[rx_name]
-            
-            # Optimization: Skip loopback (optional)
             if phys_sender == phys_rx: continue
-                
-            cmd = (f'python3 traffic_tool.py -m client '
-                   f'-t {phys_rx.IP()} -p 8000 -b {size_bytes} &')
-            phys_sender.cmd(cmd)
             
-    # Cleanup
-    time.sleep(2)
-    info("*** Replay Complete. Killing servers. ***\n")
+            # --- CHANGED: REDIRECT OUTPUT TO LOG FILE ---
+            # We append (>>) to a log file named after the sender host
+            log_file = f"{log_dir}/{phys_sender.name}.log"
+            
+            cmd = (f'python3 traffic_tool.py -m client '
+                   f'-t {phys_rx.IP()} -p 8000 -b {size_bytes} '
+                   f'>> {log_file} 2>&1 &') # Redirect stdout and stderr
+            
+            phys_sender.cmd(cmd)
+
+    # 5. Wait for stragglers
+    info("*** Replay finished. Waiting 5s for pending flows... ***\n")
+    time.sleep(5)
+    
+    # 6. Cleanup
     for h in net.hosts:
         h.cmd('killall -9 python3')
+
+    # 7. ANALYZE METRICS
+    analyze_results(log_dir)
+
+def analyze_results(log_dir):
+    info("\n" + "="*40 + "\n")
+    info("   EXPERIMENT RESULTS   \n")
+    info("="*40 + "\n")
+    
+    fcts = []
+    throughputs = []
+    errors = 0
+    total_flows = 0
+    
+    log_files = glob.glob(f"{log_dir}/*.log")
+    
+    for log_f in log_files:
+        with open(log_f, 'r') as f:
+            for line in f:
+                try:
+                    data = json.loads(line)
+                    if data.get('event') == 'flow_complete':
+                        fcts.append(data['duration_sec'])
+                        throughputs.append(data['throughput_mbps'])
+                        total_flows += 1
+                    elif data.get('event') == 'error':
+                        errors += 1
+                except:
+                    pass # Ignore non-json lines
+                    
+    if total_flows == 0:
+        info("No successful flows recorded.\n")
+        return
+
+    # Calculate Statistics
+    fcts = np.array(fcts)
+    
+    info(f"Total Flows:       {total_flows}\n")
+    info(f"Failed/Error:      {errors}\n")
+    info("-" * 20 + "\n")
+    
+    # Flow Completion Time (Lower is Better)
+    info(f"Avg FCT:           {np.mean(fcts)*1000:.2f} ms\n")
+    info(f"P50 FCT (Median):  {np.percentile(fcts, 50)*1000:.2f} ms\n")
+    info(f"P99 FCT (Tail):    {np.percentile(fcts, 99)*1000:.2f} ms\n")
+    info(f"Max FCT:           {np.max(fcts)*1000:.2f} ms\n")
+    
+    info("-" * 20 + "\n")
+    # Throughput (Higher is Better)
+    info(f"Avg Throughput:    {np.mean(throughputs):.2f} Mbps\n")
+    info("="*40 + "\n")

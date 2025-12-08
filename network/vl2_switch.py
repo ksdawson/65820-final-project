@@ -7,6 +7,8 @@ from ryu.lib.packet import packet, ethernet, ether_types
 import networkx as nx
 import random
 
+LOGGING = False
+
 class VL2Switch(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
@@ -62,7 +64,8 @@ class VL2Switch(app_manager.RyuApp):
             
             # Get the Datapath object for this switch
             if current_node not in self.datapaths:
-                self.logger.error(f'Cannot install flow: Datapath {current_node} not found!')
+                if LOGGING:
+                    self.logger.error(f'Cannot install flow: Datapath {current_node} not found!')
                 continue
             dp = self.datapaths[current_node]
             
@@ -103,7 +106,8 @@ class VL2Switch(app_manager.RyuApp):
         elif 3000 <= dpid < 4000:
             return 'TOR'
         else:
-            self.logger.warning(f'Unknown switch DPID: {dpid}')
+            if LOGGING:
+                self.logger.warning(f'Unknown switch DPID: {dpid}')
             return 'UNKNOWN'
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
@@ -122,7 +126,8 @@ class VL2Switch(app_manager.RyuApp):
             self.aggr_switches.add(dpid)
         elif switch_type == 'TOR':
             self.tor_switches.add(dpid)
-        self.logger.info(f'{switch_type} switch connected: {dpid}')
+        if LOGGING:
+            self.logger.info(f'{switch_type} switch connected: {dpid}')
         
         # Install Table-Miss Flow Entry
         # Priority 0 (Lowest) -> Match Everything -> Send to Controller
@@ -136,7 +141,8 @@ class VL2Switch(app_manager.RyuApp):
     def link_add_handler(self, ev):
         src = ev.link.src 
         dst = ev.link.dst
-        self.logger.info(f'Link discovered: {src} to {dst}')
+        if LOGGING:
+            self.logger.info(f'Link discovered: {src} to {dst}')
         # Add edge using .dpid for nodes and .port_no for the attribute
         self.network_graph.add_edge(src.dpid, dst.dpid, port=src.port_no)
 
@@ -144,7 +150,8 @@ class VL2Switch(app_manager.RyuApp):
     def link_delete_handler(self, ev):
         src = ev.link.src
         dst = ev.link.dst
-        self.logger.info(f'Link removed: {src} to {dst}')
+        if LOGGING:
+            self.logger.info(f'Link removed: {src} to {dst}')
         try:
             self.network_graph.remove_edge(src.dpid, dst.dpid)
         except nx.NetworkXError:
@@ -154,7 +161,8 @@ class VL2Switch(app_manager.RyuApp):
     @set_ev_cls(event.EventSwitchLeave)
     def switch_leave_handler(self, ev):
         dpid = ev.switch.dp.id
-        self.logger.info(f'Switch disconnected: {dpid}')
+        if LOGGING:
+            self.logger.info(f'Switch disconnected: {dpid}')
         if dpid in self.datapaths:
             del self.datapaths[dpid]
         try:
@@ -184,7 +192,8 @@ class VL2Switch(app_manager.RyuApp):
         # Pick a random intermediate node (Valiant Load Balancing)
         intermediate_node = self.get_random_intermediate_node()
         if not intermediate_node:
-            self.logger.warning('No intermediate nodes available. Falling back to direct shortest path.')
+            if LOGGING:
+                self.logger.warning('No intermediate nodes available. Falling back to direct shortest path.')
             return self.get_ecmp_path(src_dpid, dst_dpid)
 
         # Get paths from src to inter to dst using ECMP
@@ -251,7 +260,8 @@ class VL2Switch(app_manager.RyuApp):
 
         # Ignore LLDP packets as they're used for topology learning
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
-            # self.logger.info(f'LLDP packet received on {switch_type} switch on {dpid} (Port {in_port})')
+            if LOGGING:
+                self.logger.info(f'LLDP packet received on {switch_type} switch on {dpid} (Port {in_port})')
             return
         
         # Get host info
@@ -273,13 +283,15 @@ class VL2Switch(app_manager.RyuApp):
                 self.network_graph.add_edge(dpid, src_mac, port=in_port)
                 self.network_graph.add_edge(src_mac, dpid) # Return path
                 # Debug logging
-                self.logger.info(f"Host Edge Updated: {src_mac} on Port {in_port}. Total Hosts: {len(self.get_hosts())}")
+                if LOGGING:
+                    self.logger.info(f"Host Edge Updated: {src_mac} on Port {in_port}. Total Hosts: {len(self.get_hosts())}")
 
         # Switch logic
         if switch_type == 'TOR':
             if is_host:
                 # From host
-                self.logger.info(f'Packet received from host on ToR switch on {dpid} (Port {in_port})')
+                if LOGGING:
+                    self.logger.info(f'Packet received from host on ToR switch on {dpid} (Port {in_port})')
 
                 # If host doesn't know its dst host's mac address it sends a broadcast
                 # So we should return the mac address to it
@@ -292,29 +304,36 @@ class VL2Switch(app_manager.RyuApp):
                     # This utilizes the edge we created in Host Learning which has the 'port'
                     path = [dpid, dst_mac]
                     self.install_path_flow(path, ev, dst_mac)
-                    self.logger.info(' -> Local Switching (Intra-Rack)')
+                    if LOGGING:
+                        self.logger.info(' -> Local Switching (Intra-Rack)')
                 else:
                     # VL2 logic
                     path = self.get_vl2_path(dpid, dst_mac)
                     if path:
                         self.install_path_flow(path, ev, dst_mac)
-                        self.logger.info(' -> Remote Destination (Inter-Rack)')
+                        if LOGGING:
+                            self.logger.info(' -> Remote Destination (Inter-Rack)')
                     else:
                         # Try to learn mac address
                         self.handle_broadcast(dpid, in_port, msg)
             else:
                 # From aggr
-                self.logger.warning(f'Packet received from aggr on ToR switch on {dpid} (Port {in_port})')
+                if LOGGING:
+                    self.logger.warning(f'Packet received from aggr on ToR switch on {dpid} (Port {in_port})')
         elif switch_type == 'AGGREGATE':
             is_tor = 1 <= in_port and in_port <= 2
             if is_tor:
                 # From ToR
-                self.logger.warning(f'Packet received from ToR on aggr switch on {dpid} (Port {in_port})')
+                if LOGGING:
+                    self.logger.warning(f'Packet received from ToR on aggr switch on {dpid} (Port {in_port})')
             else:
                 # From inter
-                self.logger.warning(f'Packet received from inter on aggr switch on {dpid} (Port {in_port})')
+                if LOGGING:
+                    self.logger.warning(f'Packet received from inter on aggr switch on {dpid} (Port {in_port})')
         elif switch_type == 'INTERMEDIATE':
             # From aggr
-            self.logger.warning(f'Packet received from aggr on inter switch on {dpid} (Port {in_port})')
+            if LOGGING:
+                self.logger.warning(f'Packet received from aggr on inter switch on {dpid} (Port {in_port})')
         else:
-            self.logger.warning(f'Packet received on {switch_type} switch on {dpid} (Port {in_port})')
+            if LOGGING:
+                self.logger.warning(f'Packet received on {switch_type} switch on {dpid} (Port {in_port})')

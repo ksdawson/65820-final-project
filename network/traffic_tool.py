@@ -1,7 +1,8 @@
 import socket
 import argparse
-import sys
 import threading
+import json
+import time
 
 def run_server(port):
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -27,16 +28,40 @@ def drain_socket(conn):
     finally:
         conn.close()
 
+# def run_client(target_ip, port, num_bytes):
+#     try:
+#         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+#         s.connect((target_ip, port))
+        
+#         # Create a payload of 'x' bytes
+#         chunk_size = 4096
+#         chunk = b'x' * chunk_size
+        
+#         sent = 0
+#         while sent < num_bytes:
+#             remaining = num_bytes - sent
+#             to_send = min(chunk_size, remaining)
+#             s.sendall(chunk[:to_send])
+#             sent += to_send
+            
+#         s.close()
+#     except Exception as e:
+#         # Fail silently or print to stderr if needed
+#         pass
+
 def run_client(target_ip, port, num_bytes):
     try:
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        
+        # Measure Start Time
+        start_time = time.time()
+        
         s.connect((target_ip, port))
         
-        # Create a payload of 'x' bytes
         chunk_size = 4096
         chunk = b'x' * chunk_size
-        
         sent = 0
+        
         while sent < num_bytes:
             remaining = num_bytes - sent
             to_send = min(chunk_size, remaining)
@@ -44,9 +69,27 @@ def run_client(target_ip, port, num_bytes):
             sent += to_send
             
         s.close()
+        
+        # Measure End Time
+        end_time = time.time()
+        duration = end_time - start_time
+        
+        # Output Metrics as JSON
+        # FLUSH is critical so it appears in the log file immediately
+        print(json.dumps({
+            "event": "flow_complete",
+            "target_ip": target_ip,
+            "bytes": num_bytes,
+            "duration_sec": duration,
+            "throughput_mbps": (num_bytes * 8) / (duration * 1e6) if duration > 0 else 0
+        }), flush=True)
+
     except Exception as e:
-        # Fail silently or print to stderr if needed
-        pass
+        # Log errors too
+        print(json.dumps({
+            "event": "error",
+            "error": str(e)
+        }), flush=True)
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()

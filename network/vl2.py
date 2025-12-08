@@ -9,8 +9,8 @@ class VL2Topo(Topo):
         Args:
             D_A (int): Number of ports on aggregation switches.
             D_I (int): Number of ports on intermediate switches.
-            server_link (int): Server link bandwidth in Gbps.
-            switch_link (int): Switch link bandwidth in Gbps.
+            server_link (int): Server link bandwidth in Mbps.
+            switch_link (int): Switch link bandwidth in Mbps.
         """
         # Setup base class
         super(VL2Topo, self).__init__()
