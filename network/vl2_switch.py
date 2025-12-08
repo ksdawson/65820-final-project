@@ -203,6 +203,32 @@ class VL2Switch(app_manager.RyuApp):
     # Packet handling
     ################################################################
 
+    def handle_broadcast(self, dpid, in_port, msg):
+        # We must flood this packet to ALL ToR switches
+        for tor_dpid in self.tor_switches:
+            if tor_dpid not in self.datapaths:
+                continue
+            tor_dp = self.datapaths[tor_dpid]
+            tor_parser = tor_dp.ofproto_parser
+            actions = []
+            # Flood ports 1-20 (Host facing ports)
+            for port in range(1, 21):
+                # CRITICAL: If this is the source switch, 
+                # don't send it back to the host that sent it!
+                if tor_dpid == dpid and port == in_port:
+                    continue
+                actions.append(tor_parser.OFPActionOutput(port))
+            # Send the packet out
+            if actions:
+                out = tor_parser.OFPPacketOut(
+                    datapath=tor_dp,
+                    buffer_id=tor_dp.ofproto.OFP_NO_BUFFER,
+                    in_port=tor_dp.ofproto.OFPP_CONTROLLER,
+                    actions=actions,
+                    data=msg.data)
+                tor_dp.send_msg(out)
+        return
+
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
         # Algo: When flow first enters the network (at the src ToR) calculate the entire path
@@ -258,30 +284,7 @@ class VL2Switch(app_manager.RyuApp):
                 # If host doesn't know its dst host's mac address it sends a broadcast
                 # So we should return the mac address to it
                 if dst_mac == 'ff:ff:ff:ff:ff:ff':
-                    # We must flood this packet to ALL ToR switches
-                    for tor_dpid in self.tor_switches:
-                        if tor_dpid not in self.datapaths:
-                            continue
-                        tor_dp = self.datapaths[tor_dpid]
-                        tor_parser = tor_dp.ofproto_parser
-                        actions = []
-                        # Flood ports 1-20 (Host facing ports)
-                        for port in range(1, 21):
-                            # CRITICAL: If this is the source switch, 
-                            # don't send it back to the host that sent it!
-                            if tor_dpid == dpid and port == in_port:
-                                continue
-                            actions.append(tor_parser.OFPActionOutput(port))
-                        # Send the packet out
-                        if actions:
-                            out = tor_parser.OFPPacketOut(
-                                datapath=tor_dp,
-                                buffer_id=tor_dp.ofproto.OFP_NO_BUFFER,
-                                in_port=tor_dp.ofproto.OFPP_CONTROLLER,
-                                actions=actions,
-                                data=msg.data)
-                            tor_dp.send_msg(out)
-                    return
+                    self.handle_broadcast(dpid, in_port, msg)
 
                 # Install flows for packet
                 if self.network_graph.has_edge(dpid, dst_mac):
@@ -296,6 +299,9 @@ class VL2Switch(app_manager.RyuApp):
                     if path:
                         self.install_path_flow(path, ev, dst_mac)
                         self.logger.info(' -> Remote Destination (Inter-Rack)')
+                    else:
+                        # Try to learn mac address
+                        self.handle_broadcast(dpid, in_port, msg)
             else:
                 # From aggr
                 self.logger.warning(f'Packet received from aggr on ToR switch on {dpid} (Port {in_port})')
