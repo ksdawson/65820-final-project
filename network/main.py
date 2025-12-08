@@ -1,57 +1,32 @@
 from mininet.net import Mininet
 from mininet.log import setLogLevel
-from mininet.util import dumpNodeConnections
 from mininet.node import RemoteController
 from vl2 import VL2Topo
 
-def send_bytes_dst_to_src(src, dst, byte_count):
-    # Start iperf server on the 'src' (Receiver) in the background
-    # -s: server mode
-    # -p: port 5001
-    # &: run in background
-    src.cmd('iperf -s -p 5001 &')
-
-    # Run iperf client on the 'dst' (Sender)
-    # -c: connect to client
-    # -n: number of bytes to send (e.g., 10M, 1000)
-    # -p: port 5001
-    output = dst.cmd(f'iperf -c {src.IP()} -p 5001 -n {byte_count}')
-    
-    # Clean up the server process on 'src'
-    # 'kill %iperf' kills the job started in the background shell
-    src.cmd('kill %iperf')
-    
-    return output
-
-def debug(net):
-    # This dumps the topology and how nodes are interconnected through links.
-    dumpNodeConnections(net.hosts)
-
-    # This performs a basic all pairs ping test.
-    net.pingAll()
-
-def run():
+def setup_network():
     # Initialize Network
     topo = VL2Topo(D_A=2, D_I=2)
     net = Mininet(topo=topo, controller=RemoteController)
     c0 = net.addController('c0', controller=RemoteController, ip='127.0.0.1', port=6633)
-    net.start()
 
     # Configure OVS to use OpenFlow 1.3
-    t0 = net.get('t0')
-    t0.cmd('ovs-vsctl set bridge s1 protocols=OpenFlow13')
+    for t in range(1):
+        s = net.get(f't{t}')
+        s.cmd('ovs-vsctl set bridge s1 protocols=OpenFlow13')
+    for a in range(2):
+        s = net.get(f'a{a}')
+        s.cmd('ovs-vsctl set bridge s1 protocols=OpenFlow13')
+    for i in range(1):
+        s = net.get(f'i{1}')
+        s.cmd('ovs-vsctl set bridge s1 protocols=OpenFlow13')
+    return net
 
-    # Debug if needed
-    # debug(net)
+def run():
+    # Initialize Network
+    net = setup_network()
 
-    # Get hosts
-    h0 = net.get('h0') 
-    h1 = net.get('h1')
-
-    # Example: Send 50 Megabytes from h1 (Dest) to h0 (Src)
-    output = send_bytes_dst_to_src(src=h0, dst=h1, byte_count='50M')
-    with open('vl2_output.txt', 'w') as file:
-        file.write(output)
+    # Test
+    net.pingAll()
 
     # Stop network
     net.stop()
