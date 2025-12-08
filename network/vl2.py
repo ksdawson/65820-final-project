@@ -3,7 +3,7 @@ from mininet.link import TCLink
 # from utils import visualize_topo
 
 class VL2Topo(Topo):
-    def __init__(self, D_A=8, D_I=8, server_link=1000, switch_link=10000):
+    def __init__(self, D_A=8, D_I=8, server_link=1, switch_link=10):
         """
         Setups a VL2 datacenter network according to https://dl.acm.org/doi/10.1145/1594977.1592576.
         Args:
