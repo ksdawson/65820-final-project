@@ -277,9 +277,6 @@ class MeshNetwork:
             node = MeshNode(i, self, self.llm)
             self.nodes.append(node)
         
-        print(f"Created mesh network with {num_nodes} nodes")
-        for node in self.nodes:
-            print(f"  - {node.name}: {node.role}")
     
     async def route_message(self, message: Message):
         """Route a message to the appropriate node."""
@@ -329,7 +326,6 @@ class MeshNetwork:
             llm_gen_time=llm_gen_time
         )
         
-        print(f"\n[{initial_node.name}] (initial): {initial_content}\n")
         
         # Broadcast to all other nodes to start the discussion (don't log again, already logged above)
         await initial_node.broadcast(
@@ -338,12 +334,6 @@ class MeshNetwork:
         )
     
     async def run(self, topic: str, duration_seconds: float = 30.0, max_messages: int = 50):
-        """Run the mesh network discussion for a specified duration."""
-        print(f"\n{'='*60}")
-        print(f"Starting mesh network discussion")
-        print(f"Topic: {topic}")
-        print(f"Duration: {duration_seconds}s | Max messages: {max_messages}")
-        print(f"{'='*60}\n")
         
         self.is_running = True
         
@@ -396,15 +386,6 @@ class MeshNetwork:
         
         self.is_running = False
         
-        # Print summary
-        print(f"\n{'='*60}")
-        print("DISCUSSION SUMMARY")
-        print(f"{'='*60}")
-        print(f"Total messages routed: {self.message_count}")
-        print(f"Duration: {time.time() - start_time:.2f}s")
-        print("\nPer-node statistics:")
-        for node in self.nodes:
-            print(f"  {node.name}: sent={node.messages_sent}, received={node.messages_received}")
     
     def get_full_conversation(self) -> List[Dict]:
         """Get the combined conversation history from all nodes."""
@@ -422,10 +403,10 @@ class MeshNetwork:
 async def main():
     """Main entry point for running the mesh network."""
     # Configuration
-    NUM_NODES = 10  # Number of nodes in the mesh
-    DISCUSSION_DURATION = 30.0  # Seconds
+    NUM_NODES = random.randint(3, 10)  # Random number of nodes in the mesh (3-10)
+    DISCUSSION_DURATION = random.uniform(15.0, 45.0)  # Random duration (15-45 seconds)
     MAX_MESSAGES = 1000  # Maximum messages before stopping
-    TRACE_FILENAME = get_next_trace_filename("mesh_trace")
+    TRACE_FILENAME = get_next_trace_filename("agent_trace/mesh_trace")
     
     # Topic for discussion
     TOPIC = """Design a distributed system for real-time collaborative document editing.
