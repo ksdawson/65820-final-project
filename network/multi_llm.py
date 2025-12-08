@@ -131,8 +131,7 @@ def map_processes_to_hosts(net, all_logical_processes, percent_usage, procs_per_
     return mapping
 
 def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_host=8, 
-                                num_server_ports=16, time_scale=1.0, max_events=None,
-                                cleanup_interval=10000):
+                                num_server_ports=16, time_scale=1.0, max_events=30000):
     '''
     Run a multi-trace experiment on the network.
     
@@ -144,17 +143,12 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
         num_server_ports: Number of iperf3 server ports per host (for concurrency)
         time_scale: Timing scale factor (0.0 = no delays/fastest, 1.0 = real-time accurate replay)
         max_events: Maximum number of events to process (None = all events)
-        cleanup_interval: Clean up finished iperf3 processes every N events (0 = disabled)
     '''
     
-    # 0. Setup Logging with subdirectories to avoid filesystem slowdown
-    # (Creating 100K+ files in one directory causes severe performance degradation)
+    # 0. Setup Logging
     log_dir = '/tmp/mininet_metrics'
     os.system(f'rm -rf {log_dir}')
     os.system(f'mkdir -p {log_dir}')
-    # Create subdirectories (0-99) to spread files
-    for subdir in range(100):
-        os.system(f'mkdir -p {log_dir}/{subdir}')
     
     # 1. Load Traces
     all_logical_procs, events = load_and_merge_traces(trace_file_paths)
@@ -167,7 +161,6 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
     host_map = map_processes_to_hosts(net, all_logical_procs, percentage, procs_per_host)
 
     # 2. Start MULTIPLE iperf3 Servers per host (to handle concurrent connections)
-    #    iperf3 servers can only handle ONE connection at a time, so we need multiple
     BASE_PORT = 5201
     info(f'*** Starting {num_server_ports} iperf3 Servers per host... ***\n')
     for h in net.hosts:
@@ -177,63 +170,29 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
     
     time.sleep(2)  # Wait for daemons to spin up
 
-    # 3. Replay Loop with BATCHING for speed
-    # Instead of one h.cmd() per flow (~10ms each), batch commands per host
-    BATCH_SIZE = 50  # Commands to batch before executing
-    info(f'*** Replaying {len(events)} events (time_scale={time_scale}, batch_size={BATCH_SIZE})... ***\n')
+    # 3. Replay Loop
+    info(f'*** Replaying {len(events)} events (time_scale={time_scale})... ***\n')
     start_wall_time = time.time()
     if events: first_event_time = events[0].get('time', 0.0)
     
     # Track port usage per destination host for load balancing
-    host_port_counter = {}  # host_name -> next port offset to use
+    host_port_counter = {}
     flows_started = 0
     flows_skipped = 0
     last_progress_time = start_wall_time
-    
-    # Command batches per host: {host_obj: [cmd1, cmd2, ...]}
-    from collections import defaultdict
-    cmd_batches = defaultdict(list)
-    
-    def flush_batches():
-        """Execute all batched commands"""
-        for host, cmds in cmd_batches.items():
-            if cmds:
-                # Join commands - since each ends with &, just use space
-                # "cmd1 &" + " " + "cmd2 &" works correctly in bash
-                combined = ' '.join(cmds)
-                host.cmd(combined)
-        cmd_batches.clear()
 
     for i, event in enumerate(events):
-        # --- Periodic Cleanup: Kill FINISHED iperf3 client processes ---
-        if cleanup_interval > 0 and (i + 1) % cleanup_interval == 0:
-            flush_batches()  # Flush pending commands first
-            info(f'*** Waiting 3s for in-flight flows, then cleaning up... ***\n')
-            time.sleep(3)
-            # Kill on each host - batch the kill commands for speed
-            kill_cmds = []
-            for h in net.hosts:
-                kill_cmds.append((h, 'pkill -9 -f "iperf3 -c" 2>/dev/null &'))
-            # Execute kills in parallel (non-blocking)
-            for h, cmd in kill_cmds:
-                h.sendCmd(cmd)
-            # Wait for all to complete
-            for h, _ in kill_cmds:
-                h.waitOutput()
-            time.sleep(0.5)  # Brief pause after cleanup
-        
         # --- Timing (only if time_scale > 0) ---
         if time_scale > 0:
             target_delay = (event.get('time', 0.0) - first_event_time) * time_scale
             current_delay = time.time() - start_wall_time
             if target_delay > current_delay:
-                flush_batches()  # Flush before sleeping to maintain timing
                 time.sleep(target_delay - current_delay)
 
         # --- Setup ---
         sender_name = event.get('sender')
         receivers = event.get('receiver', [])
-        size_bytes = int(event.get('size', 1024))  # Default 1KB
+        size_bytes = int(event.get('size', 1024))
         if size_bytes < 1: size_bytes = 1024
 
         if sender_name not in host_map:
@@ -258,23 +217,14 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
             port = BASE_PORT + port_offset
             host_port_counter[rx_host_name] += 1
             
-            # --- Build command (don't execute yet) ---
-            # Use subdirectory based on event index to spread files
-            subdir = i % 100
-            log_file = f'{log_dir}/{subdir}/{i}_{sender_name}_to_{rx_name}.json'
+            # --- Execute command ---
+            log_file = f'{log_dir}/{i}_{sender_name}_to_{rx_name}.json'
             cmd = (f'iperf3 -c {phys_rx.IP()} -p {port} '
                    f'-n {size_bytes} -J '
                    f'> {log_file} 2>&1 &')
             
-            # Add to batch
-            cmd_batches[phys_sender].append(cmd)
+            phys_sender.cmd(cmd)
             flows_started += 1
-            
-            # Flush if batch is full
-            if len(cmd_batches[phys_sender]) >= BATCH_SIZE:
-                combined = ' '.join(cmd_batches[phys_sender])
-                phys_sender.cmd(combined)
-                cmd_batches[phys_sender] = []
         
         # Progress indicator every 1000 events OR every 5 seconds
         now = time.time()
@@ -284,9 +234,6 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
             eta = (len(events) - i - 1) / rate if rate > 0 else 0
             info(f'*** Progress: {i+1}/{len(events)} ({100*(i+1)/len(events):.1f}%) - {rate:.0f} evt/s - ETA: {eta:.0f}s ***\n')
             last_progress_time = now
-    
-    # Flush any remaining commands
-    flush_batches()
 
     elapsed_total = time.time() - start_wall_time
     info(f'*** Replay finished in {elapsed_total:.1f}s. Started {flows_started} flows, skipped {flows_skipped}. ***\n')
@@ -318,8 +265,8 @@ def analyze_iperf_results(log_dir):
     iperf_errors = []
     sample_contents = []  # Store sample file contents for debugging
     
-    # Robust Globbing - search subdirectories
-    log_files = glob.glob(f'{log_dir}/**/*.json', recursive=True)
+    # Robust Globbing
+    log_files = glob.glob(f'{log_dir}/*.json')
     info(f'Found {len(log_files)} log files to analyze.\n')
     
     for log_f in log_files:
