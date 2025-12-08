@@ -80,6 +80,13 @@ def load_and_merge_traces(trace_files):
 def map_processes_to_hosts(net, all_logical_processes, percent_usage, procs_per_host):
     '''
     Maps namespaced logical processes (e.g., 'T0-1.0') to Physical Mininet Nodes.
+    
+    Uses STRIDED assignment to ensure processes from the same group are spread
+    across different physical hosts, enabling network traffic between them.
+    
+    For example, with 8 hosts and processes ['0-1.0', '0-1.1', ..., '0-1.7']:
+    - Old (consecutive): all 8 map to host 0 -> all intra-group traffic skipped
+    - New (strided): 1.0->h0, 1.1->h1, ..., 1.7->h7 -> traffic flows across network
     '''
     # 1. Determine Physical Resources
     all_hosts = net.hosts
@@ -92,32 +99,48 @@ def map_processes_to_hosts(net, all_logical_processes, percent_usage, procs_per_
     physical_pool = all_hosts[:active_count]
     info(f'*** Resource Allocation: Using {active_count}/{total_physical} physical hosts. ***\n')
 
-    # 2. Perform Mapping (Bin Packing / Round Robin)
-    mapping = {}
-    
-    phys_idx = 0
-    procs_on_current_phys = 0
-    
+    # 2. Group processes by their logical group (e.g., '0-1.0' -> group '0-1')
+    #    Processes in the same group communicate frequently, so we spread them out
+    from collections import defaultdict
+    groups = defaultdict(list)
     for proc_name in all_logical_processes:
-        # Assign current logical process to current physical host
-        assigned_host = physical_pool[phys_idx]
-        mapping[proc_name] = assigned_host
-        
-        procs_on_current_phys += 1
-        
-        # Check if this physical host is full
-        if procs_on_current_phys >= procs_per_host:
-            # Move to next physical host
-            phys_idx += 1
-            procs_on_current_phys = 0
-            
-            # Wrap around if we run out of physical hosts
-            if phys_idx >= len(physical_pool):
-                phys_idx = 0
+        # Extract group: '0-1.0' -> '0-1', '2-3.5' -> '2-3'
+        parts = proc_name.rsplit('.', 1)
+        group_id = parts[0] if len(parts) > 1 else proc_name
+        groups[group_id].append(proc_name)
+    
+    # 3. Perform STRIDED Mapping
+    #    Assign each process in a group to a different host (round-robin across hosts)
+    mapping = {}
+    host_usage = [0] * len(physical_pool)  # Track how many procs per host
+    
+    for group_id in sorted(groups.keys()):
+        group_procs = groups[group_id]
+        for i, proc_name in enumerate(group_procs):
+            # Stride across physical hosts for each process in the group
+            phys_idx = i % len(physical_pool)
+            assigned_host = physical_pool[phys_idx]
+            mapping[proc_name] = assigned_host
+            host_usage[phys_idx] += 1
+    
+    # Log distribution stats
+    max_usage = max(host_usage) if host_usage else 0
+    min_usage = min(host_usage) if host_usage else 0
+    info(f'*** Process Distribution: {len(groups)} groups, {min_usage}-{max_usage} procs/host ***\n')
 
     return mapping
 
-def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_host=8):
+def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_host=8, num_server_ports=16):
+    '''
+    Run a multi-trace experiment on the network.
+    
+    Args:
+        net: Mininet network object
+        trace_file_paths: List of trace JSON files to replay
+        percentage: Fraction of physical hosts to use (0.0 to 1.0)
+        procs_per_host: Max logical processes per physical host
+        num_server_ports: Number of iperf3 server ports per host (for concurrency)
+    '''
     
     # 0. Setup Logging
     log_dir = '/tmp/mininet_metrics'
@@ -128,21 +151,26 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
     all_logical_procs, events = load_and_merge_traces(trace_file_paths)
     host_map = map_processes_to_hosts(net, all_logical_procs, percentage, procs_per_host)
 
-    # 2. Start iperf3 Servers (Daemon Mode)
-    info('*** Starting iperf3 Servers... ***\n')
+    # 2. Start MULTIPLE iperf3 Servers per host (to handle concurrent connections)
+    #    iperf3 servers can only handle ONE connection at a time, so we need multiple
+    BASE_PORT = 5201
+    info(f'*** Starting {num_server_ports} iperf3 Servers per host... ***\n')
     for h in net.hosts:
-        # -s: Server
-        # -p 5201: Port (Default)
-        # -D: Run as Daemon (background process automatically)
-        # --logfile: Redirect server errors to /dev/null to keep screen clean
-        h.cmd('iperf3 -s -p 5201 -D --logfile /dev/null')
+        for port_offset in range(num_server_ports):
+            port = BASE_PORT + port_offset
+            h.cmd(f'iperf3 -s -p {port} -D --logfile /dev/null')
     
-    time.sleep(1) # Quick wait for daemons to spin up
+    time.sleep(2)  # Wait for daemons to spin up
 
     # 3. Replay Loop
     info(f'*** Replaying {len(events)} events using iperf3... ***\n')
     start_wall_time = time.time()
     if events: first_event_time = events[0].get('time', 0.0)
+    
+    # Track port usage per destination host for load balancing
+    host_port_counter = {}  # host_name -> next port offset to use
+    flows_started = 0
+    flows_skipped = 0
 
     for i, event in enumerate(events):
         # --- Timing ---
@@ -154,16 +182,30 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
         # --- Setup ---
         sender_name = event.get('sender')
         receivers = event.get('receiver', [])
-        size_bytes = int(event.get('size', 1024)) # Default 1KB
+        size_bytes = int(event.get('size', 1024))  # Default 1KB
         if size_bytes < 1: size_bytes = 1024
 
-        if sender_name not in host_map: continue
+        if sender_name not in host_map:
+            flows_skipped += 1
+            continue
         phys_sender = host_map[sender_name]
 
         for rx_name in receivers:
-            if rx_name not in host_map: continue
+            if rx_name not in host_map:
+                flows_skipped += 1
+                continue
             phys_rx = host_map[rx_name]
-            if phys_sender == phys_rx: continue
+            if phys_sender == phys_rx:
+                flows_skipped += 1
+                continue
+            
+            # --- Load-balance across server ports ---
+            rx_host_name = phys_rx.name
+            if rx_host_name not in host_port_counter:
+                host_port_counter[rx_host_name] = 0
+            port_offset = host_port_counter[rx_host_name] % num_server_ports
+            port = BASE_PORT + port_offset
+            host_port_counter[rx_host_name] += 1
             
             # --- The Robust Command ---
             # Unique log file per flow (CRITICAL for concurrency)
@@ -171,17 +213,23 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
             
             # iperf3 flags:
             # -c: Client (connect to host)
-            # -n: Number of bytes to transmit (matches your trace)
-            # -J: JSON output (Clean data!)
-            # -p: Port
-            cmd = (f'iperf3 -c {phys_rx.IP()} -p 5201 '
+            # -n: Number of bytes to transmit
+            # -J: JSON output
+            # -p: Port (load-balanced across multiple servers)
+            cmd = (f'iperf3 -c {phys_rx.IP()} -p {port} '
                    f'-n {size_bytes} -J '
                    f'> {log_file} 2>&1 &')
             
             phys_sender.cmd(cmd)
+            flows_started += 1
+        
+        # Progress indicator every 10000 events
+        if (i + 1) % 10000 == 0:
+            info(f'*** Progress: {i+1}/{len(events)} events processed ***\n')
 
-    info('*** Replay finished. Waiting 10s for stragglers... ***\n')
-    time.sleep(10)
+    info(f'*** Replay finished. Started {flows_started} flows, skipped {flows_skipped}. ***\n')
+    info('*** Waiting 30s for flows to complete... ***\n')
+    time.sleep(30)  # Increased wait time for many concurrent flows
     
     # 4. Cleanup
     for h in net.hosts:
@@ -198,20 +246,42 @@ def analyze_iperf_results(log_dir):
     fcts = []
     total_bytes = 0
     errors = 0
+    empty_files = 0
+    server_busy = 0
+    connection_refused = 0
+    other_errors = []
     
     # Robust Globbing
     log_files = glob.glob(f'{log_dir}/*.json')
+    info(f'Found {len(log_files)} log files to analyze.\n')
     
     for log_f in log_files:
         try:
             with open(log_f, 'r') as f:
-                data = json.load(f)
+                content = f.read().strip()
+                if not content:
+                    empty_files += 1
+                    continue
+                    
+                data = json.loads(content)
                 
                 # iperf3 JSON structure is standard:
                 # data['end']['sum_sent']['seconds'] is the duration
                 # data['end']['sum_sent']['bytes'] is the total bytes
                 
                 if 'error' in data:
+                    error_msg = data['error'].lower()
+                    if 'busy' in error_msg:
+                        server_busy += 1
+                    elif 'refused' in error_msg or 'connect' in error_msg:
+                        connection_refused += 1
+                    else:
+                        if len(other_errors) < 5:  # Collect first 5 unique errors
+                            other_errors.append(data['error'])
+                    errors += 1
+                    continue
+                
+                if 'end' not in data or 'sum_sent' not in data.get('end', {}):
                     errors += 1
                     continue
                     
@@ -220,19 +290,31 @@ def analyze_iperf_results(log_dir):
                 
                 fcts.append(duration)
                 total_bytes += b_sent
-        except Exception:
-            # File might be empty if iperf crashed or was killed
+        except json.JSONDecodeError:
             errors += 1
+        except Exception:
+            errors += 1
+    
+    # Report error breakdown
+    info(f'Log files analyzed: {len(log_files)}\n')
+    if errors > 0 or empty_files > 0:
+        info(f'  - Empty files:       {empty_files}\n')
+        info(f'  - Server busy:       {server_busy}\n')
+        info(f'  - Connection refused: {connection_refused}\n')
+        info(f'  - Other errors:      {errors - server_busy - connection_refused}\n')
+        if other_errors:
+            info(f'  - Sample errors: {other_errors[:3]}\n')
             
     if not fcts:
         info('No successful flows found.\n')
+        info('='*40 + '\n')
         return
 
     fcts = np.array(fcts)
     
-    info(f'Total Flows:       {len(fcts)}\n')
-    info(f'Errors/Empty:      {errors}\n')
+    info(f'\nSuccessful Flows:  {len(fcts)}\n')
     info(f'Avg FCT:           {np.mean(fcts)*1000:.2f} ms\n')
+    info(f'P50 FCT:           {np.percentile(fcts, 50)*1000:.2f} ms\n')
     info(f'P99 FCT:           {np.percentile(fcts, 99)*1000:.2f} ms\n')
-    info(f'Total Vol:         {total_bytes / 1e6:.2f} MB\n')
+    info(f'Total Vol:         {total_bytes / 1e6:.2f} MB ({total_bytes / 1e9:.2f} GB)\n')
     info('='*40 + '\n')
