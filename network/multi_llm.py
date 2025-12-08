@@ -264,21 +264,63 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
     # 5. Analyze
     analyze_iperf_results(log_dir)
 
+def get_flow_type(filename):
+    '''
+    Determine if a flow is distributed inference (intra-group) or agent-agent (inter-group).
+    Filename format: {idx}_{sender}_to_{receiver}.json
+    Example: 123_0-1.0_to_0-1.5.json -> intra-group (same '0-1' prefix)
+             456_0-1.0_to_0-2.3.json -> inter-group (different prefixes)
+    '''
+    try:
+        # Extract sender and receiver from filename
+        basename = os.path.basename(filename).replace('.json', '')
+        parts = basename.split('_to_')
+        if len(parts) != 2:
+            return 'unknown'
+        
+        # Remove the event index prefix from sender
+        sender_parts = parts[0].split('_', 1)
+        sender = sender_parts[1] if len(sender_parts) > 1 else parts[0]
+        receiver = parts[1]
+        
+        # Extract group: '0-1.0' -> '0-1'
+        sender_group = sender.rsplit('.', 1)[0] if '.' in sender else sender
+        receiver_group = receiver.rsplit('.', 1)[0] if '.' in receiver else receiver
+        
+        if sender_group == receiver_group:
+            return 'distributed_inference'  # Intra-group (n.x to n.y)
+        else:
+            return 'agent_agent'  # Inter-group (n.x to m.y)
+    except:
+        return 'unknown'
+
 def analyze_iperf_results(log_dir):
     info('\n' + '='*40 + '\n')
     info('   IPERF3 EXPERIMENT RESULTS   \n')
     info('='*40 + '\n')
     
+    # Aggregate metrics
     fcts = []
-    flow_sizes = []  # Store individual flow sizes for plotting
+    flow_sizes = []
     total_bytes = 0
+    
+    # Per-flow-type metrics
+    dist_inf_fcts = []  # Distributed inference (intra-group)
+    dist_inf_sizes = []
+    dist_inf_bytes = 0
+    
+    agent_fcts = []  # Agent-to-agent (inter-group)
+    agent_sizes = []
+    agent_bytes = 0
+    
+    # Error tracking
     empty_files = 0
     server_busy = 0
     connection_refused = 0
     incomplete_json = 0
     json_parse_errors = 0
     iperf_errors = []
-    sample_contents = []  # Store sample file contents for debugging
+    sample_contents = []
     
     # Robust Globbing
     log_files = glob.glob(f'{log_dir}/*.json')
@@ -298,13 +340,8 @@ def analyze_iperf_results(log_dir):
                 except json.JSONDecodeError:
                     json_parse_errors += 1
                     if len(sample_contents) < 3:
-                        # Save first 200 chars of non-JSON content for debugging
                         sample_contents.append(content[:200])
                     continue
-                
-                # iperf3 JSON structure is standard:
-                # data['end']['sum_sent']['seconds'] is the duration
-                # data['end']['sum_sent']['bytes'] is the total bytes
                 
                 if 'error' in data:
                     error_msg = data['error'].lower()
@@ -320,16 +357,28 @@ def analyze_iperf_results(log_dir):
                 if 'end' not in data or 'sum_sent' not in data.get('end', {}):
                     incomplete_json += 1
                     if len(sample_contents) < 3:
-                        # Show what keys are present
                         sample_contents.append(f"Keys: {list(data.keys())}")
                     continue
                     
                 duration = data['end']['sum_sent']['seconds']
                 b_sent = data['end']['sum_sent']['bytes']
                 
+                # Aggregate metrics
                 fcts.append(duration)
                 flow_sizes.append(b_sent)
                 total_bytes += b_sent
+                
+                # Categorize by flow type
+                flow_type = get_flow_type(log_f)
+                if flow_type == 'distributed_inference':
+                    dist_inf_fcts.append(duration)
+                    dist_inf_sizes.append(b_sent)
+                    dist_inf_bytes += b_sent
+                elif flow_type == 'agent_agent':
+                    agent_fcts.append(duration)
+                    agent_sizes.append(b_sent)
+                    agent_bytes += b_sent
+                    
         except Exception as e:
             if len(sample_contents) < 3:
                 sample_contents.append(f"Exception: {str(e)}")
@@ -363,31 +412,77 @@ def analyze_iperf_results(log_dir):
     fcts = np.array(fcts)
     flow_sizes = np.array(flow_sizes)
     
-    info(f'\nSuccessful Flows:  {len(fcts)}\n')
+    # --- AGGREGATE METRICS ---
+    info(f'\n--- AGGREGATE (All Flows) ---\n')
+    info(f'Successful Flows:  {len(fcts)}\n')
     info(f'Avg FCT:           {np.mean(fcts)*1000:.2f} ms\n')
     info(f'P50 FCT:           {np.percentile(fcts, 50)*1000:.2f} ms\n')
     info(f'P99 FCT:           {np.percentile(fcts, 99)*1000:.2f} ms\n')
     info(f'Total Vol:         {total_bytes / 1e6:.2f} MB ({total_bytes / 1e9:.2f} GB)\n')
+    
+    # --- DISTRIBUTED INFERENCE METRICS (Intra-group: n.x -> n.y) ---
+    if dist_inf_fcts:
+        dist_inf_fcts = np.array(dist_inf_fcts)
+        dist_inf_sizes = np.array(dist_inf_sizes)
+        info(f'\n--- DISTRIBUTED INFERENCE (Intra-group: n.x -> n.y) ---\n')
+        info(f'Successful Flows:  {len(dist_inf_fcts)}\n')
+        info(f'Avg FCT:           {np.mean(dist_inf_fcts)*1000:.2f} ms\n')
+        info(f'P50 FCT:           {np.percentile(dist_inf_fcts, 50)*1000:.2f} ms\n')
+        info(f'P99 FCT:           {np.percentile(dist_inf_fcts, 99)*1000:.2f} ms\n')
+        info(f'Total Vol:         {dist_inf_bytes / 1e6:.2f} MB ({dist_inf_bytes / 1e9:.2f} GB)\n')
+        info(f'Avg Flow Size:     {np.mean(dist_inf_sizes) / 1024:.2f} KB\n')
+    else:
+        info(f'\n--- DISTRIBUTED INFERENCE (Intra-group) ---\n')
+        info(f'No distributed inference flows found.\n')
+    
+    # --- AGENT-TO-AGENT METRICS (Inter-group: n.x -> m.y) ---
+    if agent_fcts:
+        agent_fcts = np.array(agent_fcts)
+        agent_sizes = np.array(agent_sizes)
+        info(f'\n--- AGENT-TO-AGENT (Inter-group: n.x -> m.y) ---\n')
+        info(f'Successful Flows:  {len(agent_fcts)}\n')
+        info(f'Avg FCT:           {np.mean(agent_fcts)*1000:.2f} ms\n')
+        info(f'P50 FCT:           {np.percentile(agent_fcts, 50)*1000:.2f} ms\n')
+        info(f'P99 FCT:           {np.percentile(agent_fcts, 99)*1000:.2f} ms\n')
+        info(f'Total Vol:         {agent_bytes / 1e6:.2f} MB ({agent_bytes / 1e9:.2f} GB)\n')
+        info(f'Avg Flow Size:     {np.mean(agent_sizes) / 1024:.2f} KB\n')
+    else:
+        info(f'\n--- AGENT-TO-AGENT (Inter-group) ---\n')
+        info(f'No agent-to-agent flows found.\n')
+    
     info('='*40 + '\n')
     
-    # Plot distributions
-    plot_distributions(flow_sizes, fcts)
+    # Plot distributions for all flow types
+    plot_distributions(flow_sizes, fcts, label='All Flows')
+    
+    if len(dist_inf_fcts) > 0:
+        plot_distributions(dist_inf_sizes, dist_inf_fcts, label='Distributed Inference')
+    
+    if len(agent_fcts) > 0:
+        plot_distributions(agent_sizes, agent_fcts, label='Agent-to-Agent')
 
 
-def plot_distributions(flow_sizes, fcts, output_dir = f"plots/{CC_ALG}"):
+def plot_distributions(flow_sizes, fcts, output_dir=f"plots/{CC_ALG}", label='All Flows'):
     '''
     Plot two graphs:
     1. Distribution of flow sizes (data per event)
     2. Distribution of Flow Completion Times (FCT)
     
-    Saves plots to the output directory.
+    Args:
+        flow_sizes: Array of flow sizes in bytes
+        fcts: Array of flow completion times in seconds
+        output_dir: Directory to save plots
+        label: Label for the flow type (e.g., 'All Flows', 'Distributed Inference', 'Agent-to-Agent')
     '''
     if len(flow_sizes) == 0 or len(fcts) == 0:
-        info('*** No data to plot ***\n')
+        info(f'*** No data to plot for {label} ***\n')
         return
     
     # Create output directory if it doesn't exist
     os.makedirs(output_dir, exist_ok=True)
+    
+    # Create filename-safe version of label
+    label_safe = label.lower().replace(' ', '_').replace('-', '_')
     
     # Convert to more readable units
     flow_sizes_kb = flow_sizes / 1024  # Convert bytes to KB
@@ -395,6 +490,7 @@ def plot_distributions(flow_sizes, fcts, output_dir = f"plots/{CC_ALG}"):
     
     # Create figure with two subplots
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    fig.suptitle(f'{label} ({len(fcts)} flows)', fontsize=16, fontweight='bold')
     
     # --- Plot 1: Flow Size Distribution ---
     ax1 = axes[0]
@@ -404,7 +500,7 @@ def plot_distributions(flow_sizes, fcts, output_dir = f"plots/{CC_ALG}"):
     ax1.hist(filtered_sizes, bins=50, color='steelblue', edgecolor='black', alpha=0.7)
     ax1.set_xlabel('Flow Size (KB)', fontsize=12)
     ax1.set_ylabel('Count', fontsize=12)
-    ax1.set_title('Distribution of Flow Sizes', fontsize=14, fontweight='bold')
+    ax1.set_title('Distribution of Flow Sizes', fontsize=14)
     ax1.axvline(np.mean(flow_sizes_kb), color='red', linestyle='--', linewidth=2, 
                 label=f'Mean: {np.mean(flow_sizes_kb):.1f} KB')
     ax1.axvline(np.median(flow_sizes_kb), color='orange', linestyle='--', linewidth=2,
@@ -421,7 +517,7 @@ def plot_distributions(flow_sizes, fcts, output_dir = f"plots/{CC_ALG}"):
     ax2.hist(filtered_fcts, bins=50, color='forestgreen', edgecolor='black', alpha=0.7)
     ax2.set_xlabel('Flow Completion Time (ms)', fontsize=12)
     ax2.set_ylabel('Count', fontsize=12)
-    ax2.set_title('Distribution of Flow Completion Times (up to P99)', fontsize=14, fontweight='bold')
+    ax2.set_title('Distribution of FCT (up to P99)', fontsize=14)
     ax2.axvline(np.mean(fcts_ms), color='red', linestyle='--', linewidth=2,
                 label=f'Mean: {np.mean(fcts_ms):.1f} ms')
     ax2.axvline(np.median(fcts_ms), color='orange', linestyle='--', linewidth=2,
@@ -435,10 +531,11 @@ def plot_distributions(flow_sizes, fcts, output_dir = f"plots/{CC_ALG}"):
     # Adjust layout and save
     plt.tight_layout()
     
-    # Save to output directory
-    plot_path = f'{output_dir}/distributions.png'
+    # Save to output directory with label in filename
+    plot_path = f'{output_dir}/distributions_{label_safe}.png'
     plt.savefig(plot_path, dpi=150, bbox_inches='tight')
-    info(f'*** Saved distribution plots to: {plot_path} ***\n')
+    info(f'*** Saved {label} distribution plots to: {plot_path} ***\n')
+    plt.close(fig)
     
     # Also create a CDF plot for FCT (more informative for network analysis)
     fig2, ax3 = plt.subplots(figsize=(8, 5))
@@ -447,7 +544,7 @@ def plot_distributions(flow_sizes, fcts, output_dir = f"plots/{CC_ALG}"):
     ax3.plot(sorted_fcts, cdf, color='steelblue', linewidth=2)
     ax3.set_xlabel('Flow Completion Time (ms)', fontsize=12)
     ax3.set_ylabel('CDF', fontsize=12)
-    ax3.set_title('CDF of Flow Completion Times', fontsize=14, fontweight='bold')
+    ax3.set_title(f'CDF of Flow Completion Times - {label}', fontsize=14, fontweight='bold')
     ax3.axhline(0.5, color='orange', linestyle='--', alpha=0.7, label='P50')
     ax3.axhline(0.99, color='purple', linestyle='--', alpha=0.7, label='P99')
     ax3.axvline(np.median(fcts_ms), color='orange', linestyle=':', alpha=0.7)
@@ -458,7 +555,7 @@ def plot_distributions(flow_sizes, fcts, output_dir = f"plots/{CC_ALG}"):
     ax3.set_xlim(0, np.percentile(fcts_ms, 99.5) * 1.05)
     ax3.set_ylim(0, 1.02)
     
-    cdf_path = f'{output_dir}/fct_cdf.png'
+    cdf_path = f'{output_dir}/fct_cdf_{label_safe}.png'
     plt.savefig(cdf_path, dpi=150, bbox_inches='tight')
     info(f'*** Saved FCT CDF plot to: {cdf_path} ***\n')
     
