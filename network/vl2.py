@@ -21,11 +21,11 @@ class VL2Topo(Topo):
         num_tor = D_A * D_I // 4
         num_host = 20 * num_tor
 
-        # Setup nodes
-        self._inter_switches = {f'i{i}':self.addSwitch(f'i{i}') for i in range(num_inter)}
-        self._aggr_switches = {f'a{a}':self.addSwitch(f'a{a}') for a in range(num_aggr)}
-        self._tor_switches = {f't{t}':self.addSwitch(f't{t}') for t in range(num_tor)}
-        self._hosts = {f'h{h}':self.addHost(f'h{h}') for h in range(num_host)}
+        # Setup nodes with explicit DPIDs (formatted as hex strings for Mininet)
+        # We use hex(val)[2:] to remove the '0x' prefix
+        self._inter_switches = {f'i{i}': self.addSwitch(f'i{i}', dpid=hex(1000 + i)[2:]) for i in range(num_inter)}
+        self._aggr_switches = {f'a{a}': self.addSwitch(f'a{a}', dpid=hex(2000 + a)[2:]) for a in range(num_aggr)}
+        self._tor_switches = {f't{t}': self.addSwitch(f't{t}', dpid=hex(3000 + t)[2:]) for t in range(num_tor)}
 
         # Connect hosts to ToRs
         for t in range(num_tor):

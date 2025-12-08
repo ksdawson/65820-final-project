@@ -4,24 +4,51 @@ from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cl
 from ryu.ofproto import ofproto_v1_3
 from ryu.topology import event
 import networkx as nx
+import random
 
 class VL2Switch(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
+        # Setup
         super(VL2Switch, self).__init__(*args, **kwargs)
+
+        # Network topology
         self.network_graph = nx.DiGraph()
+        self.hosts = set()
+        self.tor_switches = set()
+        self.aggr_switches = set()
+        self.inter_switches = set()
 
     ################################################################
     # Topology learning functions
     ################################################################
 
+    def classify_switch(self, dpid):
+        if 1000 <= dpid < 2000:
+            return 'INTERMEDIATE'
+        elif 2000 <= dpid < 3000:
+            return 'AGGREGATE'
+        elif 3000 <= dpid < 4000:
+            return 'TOR'
+        else:
+            self.logger.warning(f'Unknown switch DPID: {dpid}')
+            return 'UNKNOWN'
+
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
         dpid = ev.msg.datapath.id
-        self.logger.info(f'Switch connected: {dpid}')
         # Add node
         self.network_graph.add_node(dpid)
+        # Get switch type
+        switch_type = self.classify_switch(dpid)
+        self.logger.info(f'{switch_type} switch connected: {dpid}')
+        if switch_type == 'INTERMEDIATE':
+            self.inter_switches.add(dpid)
+        elif switch_type == 'AGGREGATE':
+            self.aggr_switches.add(dpid)
+        elif switch_type == 'TOR':
+            self.tor_switches.add(dpid)
         
     @set_ev_cls(event.EventLinkAdd)
     def link_add_handler(self, ev):
@@ -51,3 +78,9 @@ class VL2Switch(app_manager.RyuApp):
         except nx.NetworkXError:
             # Node was already removed
             pass
+
+    ################################################################
+    # Routing functions
+    ################################################################
+
+    
