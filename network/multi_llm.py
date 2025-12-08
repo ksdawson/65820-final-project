@@ -5,7 +5,10 @@ import random
 import os
 import numpy as np
 import glob
+import matplotlib.pyplot as plt
 from mininet.log import info, error
+
+CC_ALG='dctcp'
 
 def load_and_merge_traces(trace_files):
     '''
@@ -132,7 +135,7 @@ def map_processes_to_hosts(net, all_logical_processes, percent_usage, procs_per_
 
 def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_host=8, 
                                 num_server_ports=32, time_scale=1.0, max_events=30000,
-                                congestion_control='cubic'):
+                                congestion_control=CC_ALG):
     '''
     Run a multi-trace experiment on the network.
     
@@ -267,6 +270,7 @@ def analyze_iperf_results(log_dir):
     info('='*40 + '\n')
     
     fcts = []
+    flow_sizes = []  # Store individual flow sizes for plotting
     total_bytes = 0
     empty_files = 0
     server_busy = 0
@@ -324,6 +328,7 @@ def analyze_iperf_results(log_dir):
                 b_sent = data['end']['sum_sent']['bytes']
                 
                 fcts.append(duration)
+                flow_sizes.append(b_sent)
                 total_bytes += b_sent
         except Exception as e:
             if len(sample_contents) < 3:
@@ -356,6 +361,7 @@ def analyze_iperf_results(log_dir):
         return
 
     fcts = np.array(fcts)
+    flow_sizes = np.array(flow_sizes)
     
     info(f'\nSuccessful Flows:  {len(fcts)}\n')
     info(f'Avg FCT:           {np.mean(fcts)*1000:.2f} ms\n')
@@ -363,3 +369,86 @@ def analyze_iperf_results(log_dir):
     info(f'P99 FCT:           {np.percentile(fcts, 99)*1000:.2f} ms\n')
     info(f'Total Vol:         {total_bytes / 1e6:.2f} MB ({total_bytes / 1e9:.2f} GB)\n')
     info('='*40 + '\n')
+    
+    # Plot distributions
+    plot_distributions(flow_sizes, fcts, log_dir)
+
+
+def plot_distributions(flow_sizes, fcts, output_dir = f"plots/{CC_ALG}"):
+    '''
+    Plot two graphs:
+    1. Distribution of flow sizes (data per event)
+    2. Distribution of Flow Completion Times (FCT)
+    
+    Saves plots to the output directory.
+    '''
+    if len(flow_sizes) == 0 or len(fcts) == 0:
+        info('*** No data to plot ***\n')
+        return
+    
+    # Convert to more readable units
+    flow_sizes_kb = flow_sizes / 1024  # Convert bytes to KB
+    fcts_ms = fcts * 1000  # Convert seconds to ms
+    
+    # Create figure with two subplots
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    
+    # --- Plot 1: Flow Size Distribution ---
+    ax1 = axes[0]
+    ax1.hist(flow_sizes_kb, bins=50, color='steelblue', edgecolor='black', alpha=0.7)
+    ax1.set_xlabel('Flow Size (KB)', fontsize=12)
+    ax1.set_ylabel('Count', fontsize=12)
+    ax1.set_title('Distribution of Flow Sizes', fontsize=14, fontweight='bold')
+    ax1.axvline(np.mean(flow_sizes_kb), color='red', linestyle='--', linewidth=2, 
+                label=f'Mean: {np.mean(flow_sizes_kb):.1f} KB')
+    ax1.axvline(np.median(flow_sizes_kb), color='orange', linestyle='--', linewidth=2,
+                label=f'Median: {np.median(flow_sizes_kb):.1f} KB')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    
+    # --- Plot 2: FCT Distribution ---
+    ax2 = axes[1]
+    # Use log scale for FCT since it often has long tail
+    ax2.hist(fcts_ms, bins=50, color='forestgreen', edgecolor='black', alpha=0.7)
+    ax2.set_xlabel('Flow Completion Time (ms)', fontsize=12)
+    ax2.set_ylabel('Count', fontsize=12)
+    ax2.set_title('Distribution of Flow Completion Times', fontsize=14, fontweight='bold')
+    ax2.axvline(np.mean(fcts_ms), color='red', linestyle='--', linewidth=2,
+                label=f'Mean: {np.mean(fcts_ms):.1f} ms')
+    ax2.axvline(np.median(fcts_ms), color='orange', linestyle='--', linewidth=2,
+                label=f'P50: {np.median(fcts_ms):.1f} ms')
+    ax2.axvline(np.percentile(fcts_ms, 99), color='purple', linestyle='--', linewidth=2,
+                label=f'P99: {np.percentile(fcts_ms, 99):.1f} ms')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+    
+    # Adjust layout and save
+    plt.tight_layout()
+    
+    # Save to output directory
+    plot_path = f'{output_dir}/distributions.png'
+    plt.savefig(plot_path, dpi=150, bbox_inches='tight')
+    info(f'*** Saved distribution plots to: {plot_path} ***\n')
+    
+    # Also create a CDF plot for FCT (more informative for network analysis)
+    fig2, ax3 = plt.subplots(figsize=(8, 5))
+    sorted_fcts = np.sort(fcts_ms)
+    cdf = np.arange(1, len(sorted_fcts) + 1) / len(sorted_fcts)
+    ax3.plot(sorted_fcts, cdf, color='steelblue', linewidth=2)
+    ax3.set_xlabel('Flow Completion Time (ms)', fontsize=12)
+    ax3.set_ylabel('CDF', fontsize=12)
+    ax3.set_title('CDF of Flow Completion Times', fontsize=14, fontweight='bold')
+    ax3.axhline(0.5, color='orange', linestyle='--', alpha=0.7, label='P50')
+    ax3.axhline(0.99, color='purple', linestyle='--', alpha=0.7, label='P99')
+    ax3.axvline(np.median(fcts_ms), color='orange', linestyle=':', alpha=0.7)
+    ax3.axvline(np.percentile(fcts_ms, 99), color='purple', linestyle=':', alpha=0.7)
+    ax3.legend()
+    ax3.grid(True, alpha=0.3)
+    ax3.set_xlim(left=0)
+    ax3.set_ylim(0, 1.02)
+    
+    cdf_path = f'{output_dir}/fct_cdf.png'
+    plt.savefig(cdf_path, dpi=150, bbox_inches='tight')
+    info(f'*** Saved FCT CDF plot to: {cdf_path} ***\n')
+    
+    plt.close('all')
