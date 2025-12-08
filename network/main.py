@@ -18,7 +18,7 @@ def host_hello(net):
 
 def setup_network():
     # Initialize Network
-    topo = VL2Topo(D_A=2, D_I=2)
+    topo = VL2Topo(D_A=4, D_I=4)
     net = Mininet(topo=topo, controller=None) # Don't add default controller
     net.addController('c0', controller=RemoteController, ip='127.0.0.1', port=6633)
 

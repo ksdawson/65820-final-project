@@ -23,6 +23,14 @@ class VL2Switch(app_manager.RyuApp):
         self.inter_switches = set()
 
     ################################################################
+    # Helper functions
+    ################################################################
+
+    def get_hosts(self):
+        hosts = [n for n, d in self.network_graph.nodes(data=True) if d.get('type') == 'HOST']
+        return hosts
+
+    ################################################################
     # Hardware functions
     ################################################################
 
@@ -230,20 +238,16 @@ class VL2Switch(app_manager.RyuApp):
             # Ensure the Node exists
             if src_mac not in self.network_graph:
                 self.network_graph.add_node(src_mac, type='HOST')
-
             # Check if edge exists and points to the correct port
             update_edge = True
             if self.network_graph.has_edge(dpid, src_mac):
                 if self.network_graph[dpid][src_mac].get('port') == in_port:
                     update_edge = False
-            
             if update_edge:
                 self.network_graph.add_edge(dpid, src_mac, port=in_port)
                 self.network_graph.add_edge(src_mac, dpid) # Return path
-                
                 # Debug logging
-                hosts = [n for n, d in self.network_graph.nodes(data=True) if d.get('type') == 'HOST']
-                self.logger.info(f"Host Edge Updated: {src_mac} on Port {in_port}. Total Hosts: {len(hosts)}")
+                self.logger.info(f"Host Edge Updated: {src_mac} on Port {in_port}. Total Hosts: {len(self.get_hosts())}")
 
         # Switch logic
         if switch_type == 'TOR':
@@ -253,23 +257,6 @@ class VL2Switch(app_manager.RyuApp):
 
                 # If host doesn't know its dst host's mac address it sends a broadcast
                 # So we should return the mac address to it
-                # if dst_mac == 'ff:ff:ff:ff:ff:ff':
-                #     self.logger.info(' -> ARP broadcast')
-
-                #     # Flood to all other host ports on this rack (Ports 1-20)
-                #     actions = []
-                #     for port in range(1, 21):
-                #         if port != in_port:
-                #             actions.append(datapath.ofproto_parser.OFPActionOutput(port))
-                    
-                #     # Send the packet out immediately
-                #     out = datapath.ofproto_parser.OFPPacketOut(datapath=datapath, 
-                #                               buffer_id=msg.buffer_id,
-                #                               in_port=in_port, 
-                #                               actions=actions, 
-                #                               data=msg.data)
-                #     datapath.send_msg(out)
-                #     return
                 if dst_mac == 'ff:ff:ff:ff:ff:ff':
                     # We must flood this packet to ALL ToR switches
                     for tor_dpid in self.tor_switches:
