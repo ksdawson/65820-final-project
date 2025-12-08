@@ -168,15 +168,16 @@ class VL2Switch(app_manager.RyuApp):
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocols(ethernet.ethernet)[0]
 
+        dpid = datapath.id
+        in_port = msg.match['in_port']
+        switch_type = self.classify_switch(dpid)
+
         # Skip LLDP packets as they're used for topology learning
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
-            self.logger.info(f"LLDP packet received on {self.classify_switch(dpid)} switch on {dpid} (Port {in_port})")
+            self.logger.info(f"LLDP packet received on {switch_type} switch on {dpid} (Port {in_port})")
             return
         src_mac = eth.src
         dst_mac = eth.dst
-
-        dpid = datapath.id
-        in_port = msg.match['in_port']
 
         # Learn the src host location if we haven't seen it
         if src_mac not in self.network_graph:
@@ -196,7 +197,6 @@ class VL2Switch(app_manager.RyuApp):
             return
 
         # CHECK: Where am I?
-        switch_type = self.classify_switch(dpid)
         if switch_type == 'TOR':
             if 1 <= in_port and in_port <= 20:
                 # From host
