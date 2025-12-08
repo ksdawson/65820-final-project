@@ -214,17 +214,24 @@ class VL2Switch(app_manager.RyuApp):
         is_host = switch_type == 'TOR' and 1 <= in_port and in_port <= 20
 
         # Learn the src host location if we haven't seen it
-        if is_host and src_mac not in self.network_graph:
-            self.network_graph.add_node(src_mac, type='HOST')
-            self.network_graph.add_edge(dpid, src_mac, port=in_port)
-            self.network_graph.add_edge(src_mac, dpid) # Return path
+        if is_host:
+            # Ensure the Node exists
+            if src_mac not in self.network_graph:
+                self.network_graph.add_node(src_mac, type='HOST')
 
-            # Returns a list of host MAC addresses
-            hosts = [n for n, d in self.network_graph.nodes(data=True) if d.get('type') == 'HOST']
-            self.logger.info(f'{len(hosts)} hosts connected to graph')
-
-            # self.logger.info(f'[HOST LEARNED] MAC: {src_mac} attached to Switch: {dpid} Port: {in_port}')
-            # self.logger.info(f'Current Graph Nodes: {self.network_graph.nodes()}')
+            # Check if edge exists and points to the correct port
+            update_edge = True
+            if self.network_graph.has_edge(dpid, src_mac):
+                if self.network_graph[dpid][src_mac].get('port') == in_port:
+                    update_edge = False
+            
+            if update_edge:
+                self.network_graph.add_edge(dpid, src_mac, port=in_port)
+                self.network_graph.add_edge(src_mac, dpid) # Return path
+                
+                # Debug logging
+                hosts = [n for n, d in self.network_graph.nodes(data=True) if d.get('type') == 'HOST']
+                self.logger.info(f"Host Edge Updated: {src_mac} on Port {in_port}. Total Hosts: {len(hosts)}")
 
         # Switch logic
         if switch_type == 'TOR':
