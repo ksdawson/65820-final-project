@@ -16,6 +16,7 @@ class VL2Switch(app_manager.RyuApp):
 
         # Network topology
         self.network_graph = nx.DiGraph()
+        self.datapaths = {}
         self.hosts = set()
         self.tor_switches = set()
         self.aggr_switches = set()
@@ -25,14 +26,14 @@ class VL2Switch(app_manager.RyuApp):
     # Hardware functions
     ################################################################
 
-    def _send_packet(self, datapath, port, pkt):
+    def send_packet(self, datapath, port, pkt):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
         pkt.serialize()
         data = pkt.data
         actions = [parser.OFPActionOutput(port)]
         out = parser.OFPPacketOut(datapath=datapath, buffer_id=ofproto.OFP_NO_BUFFER,
-                                  in_port=ofproto.OFPP_CONTROLLER, actions=actions, data=data)
+            in_port=ofproto.OFPP_CONTROLLER, actions=actions, data=data)
         datapath.send_msg(out)
 
     def install_path_flow(self, path, ev, dst_mac, src_mac=None):
@@ -67,14 +68,12 @@ class VL2Switch(app_manager.RyuApp):
             
             # Optimization: If this is the switch holding the packet NOW, send it immediately
             if current_node == msg.datapath.id:
-                self._send_packet(dp, out_port, packet.Packet(msg.data))
+                self.send_packet(dp, out_port, packet.Packet(msg.data))
 
     def add_flow(self, datapath, priority, match, actions, buffer_id=None):
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
-
         inst = [parser.OFPInstructionActions(ofproto.OFPIT_APPLY_ACTIONS, actions)]
-        
         if buffer_id:
             mod = parser.OFPFlowMod(datapath=datapath, buffer_id=buffer_id,
                                     priority=priority, match=match,
@@ -105,6 +104,7 @@ class VL2Switch(app_manager.RyuApp):
         datapath = ev.msg.datapath
         dpid = datapath.id
         self.network_graph.add_node(dpid)
+        self.datapaths[dpid] = datapath
 
         # Store switch type
         switch_type = self.classify_switch(dpid)
@@ -147,6 +147,8 @@ class VL2Switch(app_manager.RyuApp):
     def switch_leave_handler(self, ev):
         dpid = ev.switch.dp.id
         self.logger.info(f'Switch disconnected: {dpid}')
+        if dpid in self.datapaths:
+            del self.datapaths[dpid]
         try:
             self.network_graph.remove_node(dpid)
         except nx.NetworkXError:
@@ -248,8 +250,12 @@ class VL2Switch(app_manager.RyuApp):
             if is_host:
                 # From host
                 # self.logger.info(f'Packet received from host on ToR switch on {dpid} (Port {in_port})')
+
+                # If host doesn't know its dst host's mac address it sends a broadcast
+                # So we should return the mac address to it
                 if dst_mac == 'ff:ff:ff:ff:ff:ff':
                     self.logger.info(' -> ARP broadcast')
+
                     # Flood to all other host ports on this rack (Ports 1-20)
                     actions = []
                     for port in range(1, 21):
