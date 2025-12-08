@@ -245,11 +245,13 @@ def analyze_iperf_results(log_dir):
     
     fcts = []
     total_bytes = 0
-    errors = 0
     empty_files = 0
     server_busy = 0
     connection_refused = 0
-    other_errors = []
+    incomplete_json = 0
+    json_parse_errors = 0
+    iperf_errors = []
+    sample_contents = []  # Store sample file contents for debugging
     
     # Robust Globbing
     log_files = glob.glob(f'{log_dir}/*.json')
@@ -262,8 +264,16 @@ def analyze_iperf_results(log_dir):
                 if not content:
                     empty_files += 1
                     continue
-                    
-                data = json.loads(content)
+                
+                # Try to parse JSON
+                try:
+                    data = json.loads(content)
+                except json.JSONDecodeError:
+                    json_parse_errors += 1
+                    if len(sample_contents) < 3:
+                        # Save first 200 chars of non-JSON content for debugging
+                        sample_contents.append(content[:200])
+                    continue
                 
                 # iperf3 JSON structure is standard:
                 # data['end']['sum_sent']['seconds'] is the duration
@@ -276,13 +286,15 @@ def analyze_iperf_results(log_dir):
                     elif 'refused' in error_msg or 'connect' in error_msg:
                         connection_refused += 1
                     else:
-                        if len(other_errors) < 5:  # Collect first 5 unique errors
-                            other_errors.append(data['error'])
-                    errors += 1
+                        if len(iperf_errors) < 5:
+                            iperf_errors.append(data['error'])
                     continue
                 
                 if 'end' not in data or 'sum_sent' not in data.get('end', {}):
-                    errors += 1
+                    incomplete_json += 1
+                    if len(sample_contents) < 3:
+                        # Show what keys are present
+                        sample_contents.append(f"Keys: {list(data.keys())}")
                     continue
                     
                 duration = data['end']['sum_sent']['seconds']
@@ -290,23 +302,33 @@ def analyze_iperf_results(log_dir):
                 
                 fcts.append(duration)
                 total_bytes += b_sent
-        except json.JSONDecodeError:
-            errors += 1
-        except Exception:
-            errors += 1
+        except Exception as e:
+            if len(sample_contents) < 3:
+                sample_contents.append(f"Exception: {str(e)}")
+    
+    # Calculate totals
+    total_errors = (empty_files + server_busy + connection_refused + 
+                    incomplete_json + json_parse_errors + len(iperf_errors))
     
     # Report error breakdown
     info(f'Log files analyzed: {len(log_files)}\n')
-    if errors > 0 or empty_files > 0:
-        info(f'  - Empty files:       {empty_files}\n')
-        info(f'  - Server busy:       {server_busy}\n')
-        info(f'  - Connection refused: {connection_refused}\n')
-        info(f'  - Other errors:      {errors - server_busy - connection_refused}\n')
-        if other_errors:
-            info(f'  - Sample errors: {other_errors[:3]}\n')
+    info(f'  - Successful:        {len(fcts)}\n')
+    info(f'  - Empty files:       {empty_files}\n')
+    info(f'  - JSON parse errors: {json_parse_errors}\n')
+    info(f'  - Incomplete JSON:   {incomplete_json}\n')
+    info(f'  - Server busy:       {server_busy}\n')
+    info(f'  - Connection refused: {connection_refused}\n')
+    info(f'  - iperf3 errors:     {len(iperf_errors)}\n')
+    
+    if iperf_errors:
+        info(f'  Sample iperf3 errors: {iperf_errors[:3]}\n')
+    if sample_contents:
+        info(f'  Sample problematic content:\n')
+        for i, sample in enumerate(sample_contents[:3]):
+            info(f'    [{i+1}]: {sample[:150]}...\n')
             
     if not fcts:
-        info('No successful flows found.\n')
+        info('\nNo successful flows found.\n')
         info('='*40 + '\n')
         return
 
