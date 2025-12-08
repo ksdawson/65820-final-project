@@ -45,23 +45,23 @@ def end_process(agents: dict, servers: dict, node_map: dict) -> dict:
             servers[selected_tor][selected_host] += gpu_count
     return servers
 
-if __name__ == "__main__":
-    servers = create_server_dict(4, 20)
+# if __name__ == "__main__":
+#     servers = create_server_dict(4, 20)
 
-    trace_path = "full_trace/full_coding_trace_0.json"
-    with open(trace_path, "r") as f:
-        trace = json.load(f)
+#     trace_path = "full_trace/full_coding_trace_0.json"
+#     with open(trace_path, "r") as f:
+#         trace = json.load(f)
 
-    agents = trace[0]
+#     agents = trace[0]
 
-    for i in range(500):
-        servers, node_map = start_process(agents, servers)
-        print(i)
-    # servers, node_map = start_process(agents, servers)            
+#     for i in range(500):
+#         servers, node_map = start_process(agents, servers)
+#         print(i)
+#     # servers, node_map = start_process(agents, servers)            
     
-    # servers = end_process(agents, servers, node_map)
+#     # servers = end_process(agents, servers, node_map)
     
-    # print(agents)
+#     # print(agents)
 
-    # print(servers)
+#     # print(servers)
 
