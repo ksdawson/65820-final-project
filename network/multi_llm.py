@@ -8,8 +8,8 @@ import glob
 import matplotlib.pyplot as plt
 from mininet.log import info, error
 
-CC_ALG='cubic'
-MAX_EVENTS=None
+CC_ALG='dctcp'
+MAX_EVENTS=100
 
 def load_and_merge_traces(trace_files):
     '''
