@@ -11,6 +11,7 @@ import matplotlib.pyplot as plt
 from mininet.log import info, error
 
 CC_ALG='cubic'
+MAX_EVENTS=None
 
 def load_and_merge_traces(trace_files):
     '''
@@ -136,7 +137,7 @@ def map_processes_to_hosts(net, all_logical_processes, percent_usage, procs_per_
     return mapping
 
 def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_host=8, 
-                                num_server_ports=32, time_scale=1.0, max_events=10000,
+                                num_server_ports=32, time_scale=1.0, max_events=MAX_EVENTS,
                                 congestion_control=CC_ALG):
     '''
     Run a multi-trace experiment on the network.
@@ -415,24 +416,35 @@ def analyze_iperf_results(log_dir):
     flow_sizes = np.array(flow_sizes)
     
     # --- AGGREGATE METRICS ---
+    avg_flow_size = np.mean(flow_sizes)
+    avg_fct = np.mean(fcts)
+    avg_throughput = (avg_flow_size / avg_fct) * 8 / 1e6  # Convert to Mbps
+    
     info(f'\n--- AGGREGATE (All Flows) ---\n')
     info(f'Successful Flows:  {len(fcts)}\n')
-    info(f'Avg FCT:           {np.mean(fcts)*1000:.2f} ms\n')
+    info(f'Avg Flow Size:     {avg_flow_size / 1024:.2f} KB\n')
+    info(f'Avg FCT:           {avg_fct*1000:.2f} ms\n')
     info(f'P50 FCT:           {np.percentile(fcts, 50)*1000:.2f} ms\n')
     info(f'P99 FCT:           {np.percentile(fcts, 99)*1000:.2f} ms\n')
+    info(f'Avg Throughput:    {avg_throughput:.2f} Mbps\n')
     info(f'Total Vol:         {total_bytes / 1e6:.2f} MB ({total_bytes / 1e9:.2f} GB)\n')
     
     # --- DISTRIBUTED INFERENCE METRICS (Intra-group: n.x -> n.y) ---
     if dist_inf_fcts:
         dist_inf_fcts = np.array(dist_inf_fcts)
         dist_inf_sizes = np.array(dist_inf_sizes)
+        dist_avg_size = np.mean(dist_inf_sizes)
+        dist_avg_fct = np.mean(dist_inf_fcts)
+        dist_avg_throughput = (dist_avg_size / dist_avg_fct) * 8 / 1e6  # Convert to Mbps
+        
         info(f'\n--- DISTRIBUTED INFERENCE (Intra-group: n.x -> n.y) ---\n')
         info(f'Successful Flows:  {len(dist_inf_fcts)}\n')
-        info(f'Avg FCT:           {np.mean(dist_inf_fcts)*1000:.2f} ms\n')
+        info(f'Avg Flow Size:     {dist_avg_size / 1024:.2f} KB\n')
+        info(f'Avg FCT:           {dist_avg_fct*1000:.2f} ms\n')
         info(f'P50 FCT:           {np.percentile(dist_inf_fcts, 50)*1000:.2f} ms\n')
         info(f'P99 FCT:           {np.percentile(dist_inf_fcts, 99)*1000:.2f} ms\n')
+        info(f'Avg Throughput:    {dist_avg_throughput:.2f} Mbps\n')
         info(f'Total Vol:         {dist_inf_bytes / 1e6:.2f} MB ({dist_inf_bytes / 1e9:.2f} GB)\n')
-        info(f'Avg Flow Size:     {np.mean(dist_inf_sizes) / 1024:.2f} KB\n')
     else:
         info(f'\n--- DISTRIBUTED INFERENCE (Intra-group) ---\n')
         info(f'No distributed inference flows found.\n')
@@ -441,13 +453,18 @@ def analyze_iperf_results(log_dir):
     if agent_fcts:
         agent_fcts = np.array(agent_fcts)
         agent_sizes = np.array(agent_sizes)
+        agent_avg_size = np.mean(agent_sizes)
+        agent_avg_fct = np.mean(agent_fcts)
+        agent_avg_throughput = (agent_avg_size / agent_avg_fct) * 8 / 1e6  # Convert to Mbps
+        
         info(f'\n--- AGENT-TO-AGENT (Inter-group: n.x -> m.y) ---\n')
         info(f'Successful Flows:  {len(agent_fcts)}\n')
-        info(f'Avg FCT:           {np.mean(agent_fcts)*1000:.2f} ms\n')
+        info(f'Avg Flow Size:     {agent_avg_size / 1024:.2f} KB\n')
+        info(f'Avg FCT:           {agent_avg_fct*1000:.2f} ms\n')
         info(f'P50 FCT:           {np.percentile(agent_fcts, 50)*1000:.2f} ms\n')
         info(f'P99 FCT:           {np.percentile(agent_fcts, 99)*1000:.2f} ms\n')
+        info(f'Avg Throughput:    {agent_avg_throughput:.2f} Mbps\n')
         info(f'Total Vol:         {agent_bytes / 1e6:.2f} MB ({agent_bytes / 1e9:.2f} GB)\n')
-        info(f'Avg Flow Size:     {np.mean(agent_sizes) / 1024:.2f} KB\n')
     else:
         info(f'\n--- AGENT-TO-AGENT (Inter-group) ---\n')
         info(f'No agent-to-agent flows found.\n')
