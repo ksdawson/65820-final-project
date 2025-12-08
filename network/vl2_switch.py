@@ -135,14 +135,14 @@ class VL2Switch(app_manager.RyuApp):
             else:
                 # From aggr
                 self.logger.info(f"Packet received from aggr on ToR switch on {dpid} (Port {in_port})")
-        elif switch_type == 'AGGR':
+        elif switch_type == 'AGGREGATE':
             if 1 <= in_port and in_port <= 2:
                 # From ToR
                 self.logger.info(f"Packet received from ToR on aggr switch on {dpid} (Port {in_port})")
             else:
                 # From inter
                 self.logger.info(f"Packet received from inter on aggr switch on {dpid} (Port {in_port})")
-        elif switch_type == 'INTER':
+        elif switch_type == 'INTERMEDIATE':
             # From aggr
             self.logger.info(f"Packet received from aggr on inter switch on {dpid} (Port {in_port})")
         else:
