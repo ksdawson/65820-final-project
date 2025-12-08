@@ -73,7 +73,7 @@ def test_vlb_logic(net):
 
 def setup_network(D_A=2, D_I=2):
     # Kill any old processes
-    cleanup()
+    # cleanup()
 
     # Initialize Network
     topo = VL2Topo(D_A, D_I)
