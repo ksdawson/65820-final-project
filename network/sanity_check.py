@@ -62,7 +62,8 @@ class ProjectController(app_manager.RyuApp):
                     paths.append(path + [next])
                 else:
                     stack.append((next, path + [next]))
-        print "Available paths from ", src, " to ", dst, " : ", paths
+        print("Available paths from ", src, " to ", dst, " : ", paths)
+        self.logger.info("Available paths from ", src, " to ", dst, " : ", paths)
         return paths
 
     def get_link_cost(self, s1, s2):
@@ -125,7 +126,8 @@ class ProjectController(app_manager.RyuApp):
         pw = []
         for path in paths:
             pw.append(self.get_path_cost(path))
-            print path, "cost = ", pw[len(pw) - 1]
+            print(path, "cost = ", pw[len(pw) - 1])
+            self.logger.info(path, "cost = ", pw[len(pw) - 1])
         sum_of_pw = sum(pw) * 1.0
         paths_with_ports = self.add_ports_to_paths(paths, first_port, last_port)
         switches_in_paths = set().union(*paths)
@@ -210,7 +212,8 @@ class ProjectController(app_manager.RyuApp):
 
                     self.add_flow(dp, 32768, match_ip, actions)
                     self.add_flow(dp, 1, match_arp, actions)
-        print "Path installation finished in ", time.time() - computation_start 
+        print("Path installation finished in ", time.time() - computation_start)
+        self.logger.info("Path installation finished in ", time.time() - computation_start)
         return paths_with_ports[0][src][1]
 
     def add_flow(self, datapath, priority, match, actions, buffer_id=None):
@@ -231,7 +234,8 @@ class ProjectController(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def _switch_features_handler(self, ev):
-        print "switch_features_handler is called"
+        print("switch_features_handler is called")
+        self.logger.info("switch_features_handler is called")
         datapath = ev.msg.datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
@@ -325,7 +329,8 @@ class ProjectController(app_manager.RyuApp):
 
     @set_ev_cls(event.EventSwitchLeave, MAIN_DISPATCHER)
     def switch_leave_handler(self, ev):
-        print ev
+        print(ev)
+        self.logger.info(ev)
         switch = ev.switch.dp.id
         if switch in self.switches:
             self.switches.remove(switch)
