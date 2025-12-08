@@ -119,6 +119,36 @@ class VL2Switch(app_manager.RyuApp):
     # Packet handling
     ################################################################
 
+    def is_host_port(self, dpid, port_no):
+        # 1. First, check if I am a ToR. If I'm an Aggregate or Spine, 
+        # I physically cannot be connected to a host in VL2.
+        if self.classify_switch(dpid) != 'TOR':
+            return False
+
+        # 2. Check if this port connects to another switch in our graph
+        # We look at all outgoing edges from this switch 'dpid'
+        if dpid in self.network_graph:
+            for neighbor in self.network_graph[dpid]:
+                # Check the 'port' attribute of the edge (dpid -> neighbor)
+                # Note: We access the edge data using self.network_graph[u][v]
+                edge_data = self.network_graph[dpid][neighbor]
+                
+                if edge_data.get('port') == port_no:
+                    # We found a match! This port connects to 'neighbor' (a switch).
+                    return False
+        
+        # 3. If we didn't find a switch neighbor on this port, it's a host.
+        return True
+
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
-        pass
+        msg = ev.msg
+        datapath = msg.datapath
+        dpid = datapath.id
+        in_port = msg.match['in_port']
+
+        # CHECK: Where am I?
+        if self.is_host_port(dpid, in_port):
+            self.logger.info(f"Packet received from HOST on ToR {dpid} (Port {in_port})")
+        else:
+            self.logger.info(f"Packet received from SWITCH on {dpid} (Port {in_port})")
