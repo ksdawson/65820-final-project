@@ -12,16 +12,6 @@ def setup_network():
     # Start network first
     net.start()
 
-    # Configure OVS to use OpenFlow 1.3
-    for t in range(1):
-        s = net.get(f't{t}')
-        s.cmd(f'ovs-vsctl set bridge {s.name} protocols=OpenFlow13')
-    for a in range(2):
-        s = net.get(f'a{a}')
-        s.cmd(f'ovs-vsctl set bridge {s.name} protocols=OpenFlow13')
-    for i in range(1):
-        s = net.get(f'i{i}')
-        s.cmd(f'ovs-vsctl set bridge {s.name} protocols=OpenFlow13')
     return net
 
 def run():
