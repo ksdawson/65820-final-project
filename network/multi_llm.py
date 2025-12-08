@@ -386,6 +386,9 @@ def plot_distributions(flow_sizes, fcts, output_dir = f"plots/{CC_ALG}"):
         info('*** No data to plot ***\n')
         return
     
+    # Create output directory if it doesn't exist
+    os.makedirs(output_dir, exist_ok=True)
+    
     # Convert to more readable units
     flow_sizes_kb = flow_sizes / 1024  # Convert bytes to KB
     fcts_ms = fcts * 1000  # Convert seconds to ms
