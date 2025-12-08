@@ -211,18 +211,24 @@ class VL2Switch(app_manager.RyuApp):
         # Get host info
         src_mac = eth.src
         dst_mac = eth.dst
+        is_host = switch_type == 'TOR' and 1 <= in_port and in_port <= 20
 
         # Learn the src host location if we haven't seen it
-        if src_mac not in self.network_graph:
+        if is_host and src_mac not in self.network_graph:
             self.network_graph.add_node(src_mac, type='HOST')
             self.network_graph.add_edge(dpid, src_mac, port=in_port)
             self.network_graph.add_edge(src_mac, dpid) # Return path
+
+            # Returns a list of host MAC addresses
+            hosts = [n for n, d in self.network_graph.nodes(data=True) if d.get('type') == 'HOST']
+            self.logger.info(f'{len(hosts)} hosts connected to graph')
+
             # self.logger.info(f'[HOST LEARNED] MAC: {src_mac} attached to Switch: {dpid} Port: {in_port}')
             # self.logger.info(f'Current Graph Nodes: {self.network_graph.nodes()}')
 
         # Switch logic
         if switch_type == 'TOR':
-            if 1 <= in_port and in_port <= 20:
+            if is_host:
                 # From host
                 # self.logger.info(f'Packet received from host on ToR switch on {dpid} (Port {in_port})')
 
@@ -251,7 +257,8 @@ class VL2Switch(app_manager.RyuApp):
                     #  self.logger.warning(f'Error: Packet at {dpid} for unknown local host {dst_mac}')
                     return
         elif switch_type == 'AGGREGATE':
-            if 1 <= in_port and in_port <= 2:
+            is_tor = 1 <= in_port and in_port <= 2
+            if is_tor:
                 # From ToR
                 # self.logger.info(f'Packet received from ToR on aggr switch on {dpid} (Port {in_port})')
 
