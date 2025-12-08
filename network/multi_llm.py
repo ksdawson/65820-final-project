@@ -147,10 +147,14 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
         cleanup_interval: Clean up finished iperf3 processes every N events (0 = disabled)
     '''
     
-    # 0. Setup Logging
+    # 0. Setup Logging with subdirectories to avoid filesystem slowdown
+    # (Creating 100K+ files in one directory causes severe performance degradation)
     log_dir = '/tmp/mininet_metrics'
     os.system(f'rm -rf {log_dir}')
     os.system(f'mkdir -p {log_dir}')
+    # Create subdirectories (0-99) to spread files
+    for subdir in range(100):
+        os.system(f'mkdir -p {log_dir}/{subdir}')
     
     # 1. Load Traces
     all_logical_procs, events = load_and_merge_traces(trace_file_paths)
@@ -206,7 +210,17 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
             flush_batches()  # Flush pending commands first
             info(f'*** Waiting 3s for in-flight flows, then cleaning up... ***\n')
             time.sleep(3)
-            os.system('pkill -9 -f "iperf3 -c" 2>/dev/null || true')
+            # Kill on each host - batch the kill commands for speed
+            kill_cmds = []
+            for h in net.hosts:
+                kill_cmds.append((h, 'pkill -9 -f "iperf3 -c" 2>/dev/null &'))
+            # Execute kills in parallel (non-blocking)
+            for h, cmd in kill_cmds:
+                h.sendCmd(cmd)
+            # Wait for all to complete
+            for h, _ in kill_cmds:
+                h.waitOutput()
+            time.sleep(0.5)  # Brief pause after cleanup
         
         # --- Timing (only if time_scale > 0) ---
         if time_scale > 0:
@@ -245,7 +259,9 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
             host_port_counter[rx_host_name] += 1
             
             # --- Build command (don't execute yet) ---
-            log_file = f'{log_dir}/{i}_{sender_name}_to_{rx_name}.json'
+            # Use subdirectory based on event index to spread files
+            subdir = i % 100
+            log_file = f'{log_dir}/{subdir}/{i}_{sender_name}_to_{rx_name}.json'
             cmd = (f'iperf3 -c {phys_rx.IP()} -p {port} '
                    f'-n {size_bytes} -J '
                    f'> {log_file} 2>&1 &')
@@ -302,8 +318,8 @@ def analyze_iperf_results(log_dir):
     iperf_errors = []
     sample_contents = []  # Store sample file contents for debugging
     
-    # Robust Globbing
-    log_files = glob.glob(f'{log_dir}/*.json')
+    # Robust Globbing - search subdirectories
+    log_files = glob.glob(f'{log_dir}/**/*.json', recursive=True)
     info(f'Found {len(log_files)} log files to analyze.\n')
     
     for log_f in log_files:
