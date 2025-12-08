@@ -131,7 +131,8 @@ def map_processes_to_hosts(net, all_logical_processes, percent_usage, procs_per_
     return mapping
 
 def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_host=8, 
-                                num_server_ports=16, time_scale=1.0, max_events=30000):
+                                num_server_ports=16, time_scale=1.0, max_events=30000,
+                                congestion_control='dctcp'):
     '''
     Run a multi-trace experiment on the network.
     
@@ -143,6 +144,7 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
         num_server_ports: Number of iperf3 server ports per host (for concurrency)
         time_scale: Timing scale factor (0.0 = no delays/fastest, 1.0 = real-time accurate replay)
         max_events: Maximum number of events to process (None = all events)
+        congestion_control: TCP congestion control algorithm ('cubic', 'reno', 'dctcp', 'bbr')
     '''
     
     # 0. Setup Logging
@@ -160,7 +162,16 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
     
     host_map = map_processes_to_hosts(net, all_logical_procs, percentage, procs_per_host)
 
-    # 2. Start MULTIPLE iperf3 Servers per host (to handle concurrent connections)
+    # 2. Configure TCP congestion control on all hosts
+    info(f'*** Setting TCP congestion control to: {congestion_control} ***\n')
+    for h in net.hosts:
+        # Set congestion control algorithm
+        h.cmd(f'sysctl -w net.ipv4.tcp_congestion_control={congestion_control} 2>/dev/null')
+        # Enable ECN if using DCTCP (required for DCTCP to work properly)
+        if congestion_control == 'dctcp':
+            h.cmd('sysctl -w net.ipv4.tcp_ecn=1')
+
+    # 3. Start MULTIPLE iperf3 Servers per host (to handle concurrent connections)
     BASE_PORT = 5201
     info(f'*** Starting {num_server_ports} iperf3 Servers per host... ***\n')
     for h in net.hosts:
