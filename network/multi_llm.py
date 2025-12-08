@@ -173,8 +173,10 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
     
     time.sleep(2)  # Wait for daemons to spin up
 
-    # 3. Replay Loop
-    info(f'*** Replaying {len(events)} events (time_scale={time_scale})... ***\n')
+    # 3. Replay Loop with BATCHING for speed
+    # Instead of one h.cmd() per flow (~10ms each), batch commands per host
+    BATCH_SIZE = 50  # Commands to batch before executing
+    info(f'*** Replaying {len(events)} events (time_scale={time_scale}, batch_size={BATCH_SIZE})... ***\n')
     start_wall_time = time.time()
     if events: first_event_time = events[0].get('time', 0.0)
     
@@ -183,22 +185,34 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
     flows_started = 0
     flows_skipped = 0
     last_progress_time = start_wall_time
+    
+    # Command batches per host: {host_obj: [cmd1, cmd2, ...]}
+    from collections import defaultdict
+    cmd_batches = defaultdict(list)
+    
+    def flush_batches():
+        """Execute all batched commands"""
+        for host, cmds in cmd_batches.items():
+            if cmds:
+                # Join all commands with semicolons and execute in one h.cmd()
+                combined = '; '.join(cmds)
+                host.cmd(combined)
+        cmd_batches.clear()
 
     for i, event in enumerate(events):
         # --- Periodic Cleanup: Kill FINISHED iperf3 client processes ---
-        # Wait 3 seconds first to let in-flight flows complete (max flow time ~2s)
-        # This keeps the system responsive without killing active transfers
         if cleanup_interval > 0 and (i + 1) % cleanup_interval == 0:
+            flush_batches()  # Flush pending commands first
             info(f'*** Waiting 3s for in-flight flows, then cleaning up... ***\n')
-            time.sleep(3)  # Wait for recent flows to finish
-            for h in net.hosts:
-                h.cmd('pkill -9 -f "iperf3 -c" 2>/dev/null || true')
+            time.sleep(3)
+            os.system('pkill -9 -f "iperf3 -c" 2>/dev/null || true')
         
         # --- Timing (only if time_scale > 0) ---
         if time_scale > 0:
             target_delay = (event.get('time', 0.0) - first_event_time) * time_scale
             current_delay = time.time() - start_wall_time
             if target_delay > current_delay:
+                flush_batches()  # Flush before sleeping to maintain timing
                 time.sleep(target_delay - current_delay)
 
         # --- Setup ---
@@ -229,21 +243,21 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
             port = BASE_PORT + port_offset
             host_port_counter[rx_host_name] += 1
             
-            # --- The Robust Command ---
-            # Unique log file per flow (CRITICAL for concurrency)
+            # --- Build command (don't execute yet) ---
             log_file = f'{log_dir}/{i}_{sender_name}_to_{rx_name}.json'
-            
-            # iperf3 flags:
-            # -c: Client (connect to host)
-            # -n: Number of bytes to transmit
-            # -J: JSON output
-            # -p: Port (load-balanced across multiple servers)
             cmd = (f'iperf3 -c {phys_rx.IP()} -p {port} '
                    f'-n {size_bytes} -J '
                    f'> {log_file} 2>&1 &')
             
-            phys_sender.cmd(cmd)
+            # Add to batch
+            cmd_batches[phys_sender].append(cmd)
             flows_started += 1
+            
+            # Flush if batch is full
+            if len(cmd_batches[phys_sender]) >= BATCH_SIZE:
+                combined = '; '.join(cmd_batches[phys_sender])
+                phys_sender.cmd(combined)
+                cmd_batches[phys_sender] = []
         
         # Progress indicator every 1000 events OR every 5 seconds
         now = time.time()
@@ -253,6 +267,9 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
             eta = (len(events) - i - 1) / rate if rate > 0 else 0
             info(f'*** Progress: {i+1}/{len(events)} ({100*(i+1)/len(events):.1f}%) - {rate:.0f} evt/s - ETA: {eta:.0f}s ***\n')
             last_progress_time = now
+    
+    # Flush any remaining commands
+    flush_batches()
 
     elapsed_total = time.time() - start_wall_time
     info(f'*** Replay finished in {elapsed_total:.1f}s. Started {flows_started} flows, skipped {flows_skipped}. ***\n')
