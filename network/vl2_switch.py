@@ -83,4 +83,42 @@ class VL2Switch(app_manager.RyuApp):
     # Routing functions
     ################################################################
 
+    def get_random_intermediate_node(self):
+        if not self.inter_switches:
+            return None
+        return random.choice(tuple(self.inter_switches))
+
+    def get_ecmp_path(self, src_dpid, dst_dpid):
+        # Uses hops as the dist metric
+        try:
+            paths = list(nx.all_shortest_paths(self.network_graph, src_dpid, dst_dpid))
+            return random.choice(paths)
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            return None
+
+    def get_vl2_path(self, src_dpid, dst_dpid):
+        # Pick a random intermediate node (Valiant Load Balancing)
+        intermediate_node = self.get_random_intermediate_node()
+        if not intermediate_node:
+            self.logger.warning('No intermediate nodes available. Falling back to direct shortest path.')
+            return self.get_ecmp_path(src_dpid, dst_dpid)
+
+        # Get paths from src to inter to dst using ECMP
+        # Path A: Source -> Intermediate
+        path_a = self.get_ecmp_path(src_dpid, intermediate_node)
+        # Path B: Intermediate -> Destination
+        path_b = self.get_ecmp_path(intermediate_node, dst_dpid)
+        if not path_a or not path_b:
+            return None
+
+        # Combine paths
+        full_path = path_a[:-1] + path_b
+        return full_path
     
+    ################################################################
+    # Packet handling
+    ################################################################
+
+    @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
+    def _packet_in_handler(self, ev):
+        pass
