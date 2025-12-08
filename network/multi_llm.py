@@ -371,7 +371,7 @@ def analyze_iperf_results(log_dir):
     info('='*40 + '\n')
     
     # Plot distributions
-    plot_distributions(flow_sizes, fcts, log_dir)
+    plot_distributions(flow_sizes, fcts)
 
 
 def plot_distributions(flow_sizes, fcts, output_dir = f"plots/{CC_ALG}"):
@@ -395,7 +395,10 @@ def plot_distributions(flow_sizes, fcts, output_dir = f"plots/{CC_ALG}"):
     
     # --- Plot 1: Flow Size Distribution ---
     ax1 = axes[0]
-    ax1.hist(flow_sizes_kb, bins=50, color='steelblue', edgecolor='black', alpha=0.7)
+    # Limit x-axis to 99.5th percentile to fit data better (exclude extreme outliers)
+    size_limit = np.percentile(flow_sizes_kb, 99.5)
+    filtered_sizes = flow_sizes_kb[flow_sizes_kb <= size_limit]
+    ax1.hist(filtered_sizes, bins=50, color='steelblue', edgecolor='black', alpha=0.7)
     ax1.set_xlabel('Flow Size (KB)', fontsize=12)
     ax1.set_ylabel('Count', fontsize=12)
     ax1.set_title('Distribution of Flow Sizes', fontsize=14, fontweight='bold')
@@ -403,22 +406,26 @@ def plot_distributions(flow_sizes, fcts, output_dir = f"plots/{CC_ALG}"):
                 label=f'Mean: {np.mean(flow_sizes_kb):.1f} KB')
     ax1.axvline(np.median(flow_sizes_kb), color='orange', linestyle='--', linewidth=2,
                 label=f'Median: {np.median(flow_sizes_kb):.1f} KB')
+    ax1.set_xlim(0, size_limit * 1.05)  # Add 5% padding
     ax1.legend()
     ax1.grid(True, alpha=0.3)
     
     # --- Plot 2: FCT Distribution ---
     ax2 = axes[1]
-    # Use log scale for FCT since it often has long tail
-    ax2.hist(fcts_ms, bins=50, color='forestgreen', edgecolor='black', alpha=0.7)
+    # Limit x-axis to 99th percentile to fit data better
+    fct_limit = np.percentile(fcts_ms, 99)
+    filtered_fcts = fcts_ms[fcts_ms <= fct_limit]
+    ax2.hist(filtered_fcts, bins=50, color='forestgreen', edgecolor='black', alpha=0.7)
     ax2.set_xlabel('Flow Completion Time (ms)', fontsize=12)
     ax2.set_ylabel('Count', fontsize=12)
-    ax2.set_title('Distribution of Flow Completion Times', fontsize=14, fontweight='bold')
+    ax2.set_title('Distribution of Flow Completion Times (up to P99)', fontsize=14, fontweight='bold')
     ax2.axvline(np.mean(fcts_ms), color='red', linestyle='--', linewidth=2,
                 label=f'Mean: {np.mean(fcts_ms):.1f} ms')
     ax2.axvline(np.median(fcts_ms), color='orange', linestyle='--', linewidth=2,
                 label=f'P50: {np.median(fcts_ms):.1f} ms')
     ax2.axvline(np.percentile(fcts_ms, 99), color='purple', linestyle='--', linewidth=2,
                 label=f'P99: {np.percentile(fcts_ms, 99):.1f} ms')
+    ax2.set_xlim(0, fct_limit * 1.1)  # Add 10% padding
     ax2.legend()
     ax2.grid(True, alpha=0.3)
     
@@ -444,7 +451,8 @@ def plot_distributions(flow_sizes, fcts, output_dir = f"plots/{CC_ALG}"):
     ax3.axvline(np.percentile(fcts_ms, 99), color='purple', linestyle=':', alpha=0.7)
     ax3.legend()
     ax3.grid(True, alpha=0.3)
-    ax3.set_xlim(left=0)
+    # Limit x-axis to P99.5 for better visualization
+    ax3.set_xlim(0, np.percentile(fcts_ms, 99.5) * 1.05)
     ax3.set_ylim(0, 1.02)
     
     cdf_path = f'{output_dir}/fct_cdf.png'
