@@ -20,11 +20,13 @@ def configure_priority_queues(net):
             # OVS Command to create specific QoS queues
             # We use linux-htb. 
             # priority=1 is HIGHER than priority=2 in HTB config
+            # Queue 0: Low priority (Distributed Inference) - min 20%, max 70%
+            # Queue 1: High priority (Agent-to-Agent) - min 30%, max 100%
             cmd = (
                 f"ovs-vsctl -- set Port {intf.name} qos=@newqos -- "
                 f"--id=@newqos create QoS type=linux-htb other-config:max-rate=1000000000 queues=0=@q0,1=@q1 -- "
-                f"--id=@q0 create Queue other-config:min-rate=10000000 other-config:priority=2 -- " # Low Priority
-                f"--id=@q1 create Queue other-config:min-rate=10000000 other-config:priority=1"    # High Priority
+                f"--id=@q0 create Queue other-config:min-rate=200000000 other-config:max-rate=700000000 other-config:priority=2 -- "
+                f"--id=@q1 create Queue other-config:min-rate=300000000 other-config:max-rate=1000000000 other-config:priority=1"
             )
             os.system(cmd)
 
@@ -82,22 +84,22 @@ def run():
     # replay_trace(net, '../trace_generation/agent_trace/coding_trace_0.json')
 
     # Test multi trace
-    # trace_set_one = [
-    #     '../trace_generation/full_trace/full_coding_trace_0.json',
-    #     '../trace_generation/full_trace/full_coding_trace_1.json'
-    # ]
-    trace_set_two = [
-        '../trace_generation/full_trace/full_explain_trace_0.json',
-        '../trace_generation/full_trace/full_explain_trace_1.json',
-        '../trace_generation/full_trace/full_explain_trace_2.json',
-        '../trace_generation/full_trace/full_explain_trace_3.json'
+    trace_set_one = [
+        '../trace_generation/full_trace/full_coding_trace_0.json',
+        '../trace_generation/full_trace/full_coding_trace_1.json'
     ]
+    # trace_set_two = [
+    #     '../trace_generation/full_trace/full_explain_trace_0.json',
+    #     '../trace_generation/full_trace/full_explain_trace_1.json',
+    #     '../trace_generation/full_trace/full_explain_trace_2.json',
+    #     '../trace_generation/full_trace/full_explain_trace_3.json'
+    # ]
     # trace_set_three = [
     #     '../trace_generation/full_trace/full_mesh_trace_0.json',
     #     '../trace_generation/full_trace/full_mesh_trace_1.json'
     # ]
     # run_multi_trace_experiment(net, trace_set_one)
-    run_multi_trace_experiment(net, trace_set_two)
+    run_multi_trace_experiment(net, trace_set_one)
     # run_multi_trace_experiment(net, trace_set_three)
 
     # Stop network

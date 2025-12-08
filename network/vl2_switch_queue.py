@@ -274,10 +274,6 @@ class VL2Switch(app_manager.RyuApp):
         is_host = switch_type == 'TOR' and 1 <= in_port and in_port <= 20
 
         parser = datapath.ofproto_parser
-        # Match for Distributed Inference (Intra-group)
-        match_intra = parser.OFPMatch(eth_type=0x0800, ip_dscp=4) 
-        # Match for Agent-Agent (Inter-group)
-        match_inter = parser.OFPMatch(eth_type=0x0800, ip_dscp=8)
 
         # Learn the src host location if we haven't seen it
         if is_host:
