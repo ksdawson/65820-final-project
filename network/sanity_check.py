@@ -17,7 +17,10 @@ class SimpleSwitch13(app_manager.RyuApp):
         datapath = ev.msg.datapath
         ofproto = datapath.ofproto
         parser = datapath.ofproto_parser
-        # Install table-miss flow entry (flood if unknown)
+        
+        self.logger.info(f"--> Switch connected: {datapath.id}")
+
+        # Install table-miss flow entry
         match = parser.OFPMatch()
         actions = [parser.OFPActionOutput(ofproto.OFPP_CONTROLLER, ofproto.OFPCML_NO_BUFFER)]
         self.add_flow(datapath, 0, match, actions)
@@ -32,6 +35,7 @@ class SimpleSwitch13(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
+        # (Same packet handling logic as before)
         msg = ev.msg
         datapath = msg.datapath
         ofproto = datapath.ofproto
@@ -40,10 +44,13 @@ class SimpleSwitch13(app_manager.RyuApp):
 
         pkt = packet.Packet(msg.data)
         eth = pkt.get_protocols(ethernet.ethernet)[0]
-        dpid = datapath.id
 
+        # Ignore LLDP packets (used for topology discovery) to reduce log noise
+        if eth.ethertype == 0x88cc:
+            return
+
+        dpid = datapath.id
         self.mac_to_port.setdefault(dpid, {})
-        # Learn MAC address
         self.mac_to_port[dpid][eth.src] = in_port
 
         if eth.dst in self.mac_to_port[dpid]:
@@ -53,7 +60,6 @@ class SimpleSwitch13(app_manager.RyuApp):
 
         actions = [parser.OFPActionOutput(out_port)]
         
-        # Install a flow to avoid packet_in next time
         if out_port != ofproto.OFPP_FLOOD:
             match = parser.OFPMatch(in_port=in_port, eth_dst=eth.dst, eth_src=eth.src)
             self.add_flow(datapath, 1, match, actions)
@@ -65,11 +71,13 @@ class SimpleSwitch13(app_manager.RyuApp):
                                   in_port=in_port, actions=actions, data=data)
         datapath.send_msg(out)
 
-    # --- Topology Discovery Events ---
+    # --- Topology Discovery ---
     @set_ev_cls(topo_event.EventSwitchEnter)
     def switch_enter_handler(self, ev):
-        print(f"Switch discovered: {ev.switch.dp.id}")
+        # This triggers when the switch handshakes and is ready
+        self.logger.info(f"*** TOPOLOGY EVENT: Switch entered dpid={ev.switch.dp.id}")
 
     @set_ev_cls(topo_event.EventLinkAdd)
     def link_add_handler(self, ev):
-        print(f"Link discovered: {ev.link.src.dpid} -> {ev.link.dst.dpid}")
+        # This triggers when LLDP packets find a link
+        self.logger.info(f"*** TOPOLOGY EVENT: Link found {ev.link.src.dpid} -> {ev.link.dst.dpid}")
