@@ -1,8 +1,10 @@
 import json
 import time
 import math
+import sys
 import random
 import os
+import re
 import numpy as np
 import glob
 from mininet.log import info, error
@@ -117,45 +119,63 @@ def map_processes_to_hosts(net, all_logical_processes, percent_usage, procs_per_
 
     return mapping
 
+def parse_iperf_fct(output):
+    """
+    Parses iperf output to find the duration (Flow Completion Time).
+    Example Output line: 
+    '[  3]  0.0- 0.0 sec  178 KBytes  31.4 Mbits/sec'
+    We want the second timestamp '0.0 sec' (or whatever the end time is).
+    """
+    # Regex: Look for '0.0- X.X sec'
+    # Group 1 matches the end time (duration)
+    match = re.search(r'0\.0-\s*(\d+\.?\d*)\s+sec', output)
+    if match:
+        return float(match.group(1))
+    return None
+
 def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_host=8):
-    
-    # 0. Setup Logging
-    log_dir = '/tmp/mininet_metrics'
-    os.system(f'rm -rf {log_dir}')
-    os.system(f'mkdir -p {log_dir}')
-    
-    # 1. Load Traces
+    # 1. Load and Merge Traces
     all_logical_procs, events = load_and_merge_traces(trace_file_paths)
     host_map = map_processes_to_hosts(net, all_logical_procs, percentage, procs_per_host)
-
-    # 2. Start iperf3 Servers (Daemon Mode)
-    info('*** Starting iperf3 Servers... ***\n')
+    
+    # 2. Start iperf Servers (iperf2 handles multiple clients natively)
+    info('\n*** Starting iperf servers on all hosts... ***\n')
     for h in net.hosts:
         # -s: Server
-        # -p 5201: Port (Default)
-        # -D: Run as Daemon (background process automatically)
-        # --logfile: Redirect server errors to /dev/null to keep screen clean
-        h.cmd('iperf3 -s -p 5201 -D --logfile /dev/null')
+        # -p: Port 5001 (Default)
+        # & runs it in background
+        h.cmd('iperf -s -p 5001 &')
     
-    time.sleep(1) # Quick wait for daemons to spin up
+    # Wait for servers to spin up
+    time.sleep(1)
 
-    # 3. Replay Loop
-    info(f'*** Replaying {len(events)} events using iperf3... ***\n')
+    # 3. Replay Trace
+    info(f'*** Replaying {len(events)} flows... ***\n')
+    
     start_wall_time = time.time()
-    if events: first_event_time = events[0].get('time', 0.0)
+    if events: 
+        first_event_time = events[0].get('time', 0.0)
+    
+    # We store active flow handles here: (src_node, dst_node, popen_object, expected_bytes)
+    active_flows = []
 
     for i, event in enumerate(events):
         # --- Timing ---
         target_delay = event.get('time', 0.0) - first_event_time
         current_delay = time.time() - start_wall_time
+        
         if target_delay > current_delay:
             time.sleep(target_delay - current_delay)
 
         # --- Setup ---
         sender_name = event.get('sender')
         receivers = event.get('receiver', [])
-        size_bytes = int(event.get('size', 1024)) # Default 1KB
-        if size_bytes < 1: size_bytes = 1024
+        
+        # Get size, default to 1KB if missing
+        try:
+            size_bytes = int(float(event.get('size', 1024)))
+        except:
+            size_bytes = 1024
 
         if sender_name not in host_map: continue
         phys_sender = host_map[sender_name]
@@ -164,75 +184,71 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
             if rx_name not in host_map: continue
             phys_rx = host_map[rx_name]
             if phys_sender == phys_rx: continue
-            
-            # --- The Robust Command ---
-            # Unique log file per flow (CRITICAL for concurrency)
-            log_file = f'{log_dir}/{i}_{sender_name}_to_{rx_name}.json'
-            
-            # iperf3 flags:
-            # -c: Client (connect to host)
-            # -n: Number of bytes to transmit (matches your trace)
-            # -J: JSON output (Clean data!)
-            # -p: Port
-            cmd = (f'iperf3 -c {phys_rx.IP()} -p 5201 '
-                   f'-n {size_bytes} -J '
-                   f'> {log_file} 2>&1 &')
-            
-            phys_sender.cmd(cmd)
 
-    info('*** Replay finished. Waiting 10s for stragglers... ***\n')
-    time.sleep(10)
-    
-    # 4. Cleanup
-    for h in net.hosts:
-        h.cmd('killall -9 iperf3')
-    
-    # 5. Analyze
-    analyze_iperf_results(log_dir)
+            # --- LAUNCH CLIENT (Non-Blocking) ---
+            # -c: Client
+            # -n: Number of bytes to send (Critical for FCT!)
+            # -p: Port 5001
+            # -y C: CSV output (Optional, but default text is easier for simple regex)
+            cmd = f'iperf -c {phys_rx.IP()} -p 5001 -n {size_bytes}'
+            
+            # popen() starts the process and returns immediately (non-blocking)
+            # shell=True lets us pass the full command string
+            p = phys_sender.popen(cmd, shell=True, stdout=sys.stdout, stderr=sys.stdout)
+            
+            # Use 'p.stdout' explicitly if you want to capture output in Python
+            # To capture output for parsing, we must use PIPE
+            import subprocess
+            p = phys_sender.popen(cmd, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            
+            active_flows.append({
+                'src': phys_sender.name,
+                'dst': phys_rx.name,
+                'proc': p,
+                'bytes': size_bytes
+            })
 
-def analyze_iperf_results(log_dir):
-    info('\n' + '='*40 + '\n')
-    info('   IPERF3 EXPERIMENT RESULTS   \n')
-    info('='*40 + '\n')
-    
+    info(f'*** All flows launched. Waiting for completion... ***\n')
+
+    # 4. Harvest Results
     fcts = []
     total_bytes = 0
     errors = 0
-    
-    # Robust Globbing
-    log_files = glob.glob(f'{log_dir}/*.json')
-    
-    for log_f in log_files:
-        try:
-            with open(log_f, 'r') as f:
-                data = json.load(f)
-                
-                # iperf3 JSON structure is standard:
-                # data['end']['sum_sent']['seconds'] is the duration
-                # data['end']['sum_sent']['bytes'] is the total bytes
-                
-                if 'error' in data:
-                    errors += 1
-                    continue
-                    
-                duration = data['end']['sum_sent']['seconds']
-                b_sent = data['end']['sum_sent']['bytes']
-                
-                fcts.append(duration)
-                total_bytes += b_sent
-        except Exception:
-            # File might be empty if iperf crashed or was killed
-            errors += 1
-            
-    if not fcts:
-        info('No successful flows found.\n')
-        return
 
-    fcts = np.array(fcts)
+    for flow in active_flows:
+        # communicate() blocks until the process finishes
+        out, err = flow['proc'].communicate() 
+        
+        duration = parse_iperf_fct(out)
+        
+        if duration is not None:
+            fcts.append(duration)
+            total_bytes += flow['bytes']
+            # Optional: Print individual completion
+            # print(f"Flow {flow['src']}->{flow['dst']} finished in {duration}s")
+        else:
+            errors += 1
+            # print(f"Error parsing flow {flow['src']}->{flow['dst']}:\n{out}\n{err}")
+
+    # 5. Cleanup
+    for h in net.hosts:
+        h.cmd('killall -9 iperf')
+
+    # 6. Report
+    info('\n' + '='*40 + '\n')
+    info('   IPERF RESULTS   \n')
+    info('='*40 + '\n')
     
-    info(f'Total Flows:       {len(fcts)}\n')
-    info(f'Errors/Empty:      {errors}\n')
-    info(f'Avg FCT:           {np.mean(fcts)*1000:.2f} ms\n')
-    info(f'P99 FCT:           {np.percentile(fcts, 99)*1000:.2f} ms\n')
-    info(f'Total Vol:         {total_bytes / 1e6:.2f} MB\n')
+    if len(fcts) > 0:
+        fcts = [f * 1000.0 for f in fcts] # Convert to ms
+        info(f'Total Flows:      {len(active_flows)}\n')
+        info(f'Successful:       {len(fcts)}\n')
+        info(f'Failed/Parse Err: {errors}\n')
+        info('-'*20 + '\n')
+        info(f'Avg FCT:          {sum(fcts)/len(fcts):.2f} ms\n')
+        info(f'Max FCT:          {max(fcts):.2f} ms\n')
+        info(f'Total Volume:     {total_bytes} Bytes\n')
+    else:
+        info('No successful flows recorded.\n')
+    
     info('='*40 + '\n')
