@@ -1,27 +1,25 @@
-from ryu.lib.packet import packet, ethernet
-from ryu.app import simple_switch_13
+from ryu.base import app_manager
 from ryu.controller import ofp_event
-from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER
-from ryu.controller.handler import set_ev_cls
+from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
 from ryu.ofproto import ofproto_v1_3
-from ryu.lib.dpid import dpid_to_str
-from ryu.lib.packet import ether_types
-from ryu.topology import event, switches
+from ryu.topology import event
+from ryu.topology.api import get_switch, get_link
 
-class MyRyuApp(simple_switch_13.SimpleSwitch13):
+class SanityCheck(app_manager.RyuApp):
     OFP_VERSIONS = [ofproto_v1_3.OFP_VERSION]
 
     def __init__(self, *args, **kwargs):
-        super(MyRyuApp, self).__init__(*args, **kwargs)
-        self.mac_to_port = {}
-        self.topology_api = self.get_topology_api()
+        super(SanityCheck, self).__init__(*args, **kwargs)
 
-    @set_ev_cls(event.EventSwitchEnter, MAIN_DISPATCHER)
-    def get_topology_data(self, ev):
-        # Get all switches
-        switches = self.topology_api.get_all_switches(None)
-        self.logger.info("Switches: %s", switches)
+    # 1. BASIC HANDSHAKE (If this doesn't fire, Mininet isn't connected)
+    @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
+    def switch_features_handler(self, ev):
+        dpid = ev.msg.datapath.id
+        self.logger.info(f"✅ SWITCH CONNECTED! DPID: {dpid}")
 
-        # Get all links
-        links = self.topology_api.get_all_links(None)
-        self.logger.info("Links: %s", links)
+    # 2. TOPOLOGY DISCOVERY (If this doesn't fire, --observe-links is wrong)
+    @set_ev_cls(event.EventLinkAdd)
+    def link_add_handler(self, ev):
+        src = ev.link.src.dpid
+        dst = ev.link.dst.dpid
+        self.logger.info(f"🔗 LINK DISCOVERED: {src} <--> {dst}")
