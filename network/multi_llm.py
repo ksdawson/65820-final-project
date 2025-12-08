@@ -134,7 +134,7 @@ def map_processes_to_hosts(net, all_logical_processes, percent_usage, procs_per_
     return mapping
 
 def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_host=8, 
-                                num_server_ports=32, time_scale=1.0, max_events=30000,
+                                num_server_ports=32, time_scale=1.0, max_events=10000,
                                 congestion_control=CC_ALG):
     '''
     Run a multi-trace experiment on the network.
