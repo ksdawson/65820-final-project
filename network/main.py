@@ -3,32 +3,23 @@ from mininet.log import setLogLevel
 from mininet.node import RemoteController
 from vl2 import VL2Topo
 
-def setup_network():
-    # Initialize Network
-    topo = VL2Topo(D_A=2, D_I=2)
-    net = Mininet(topo=topo, controller=RemoteController)
-    c0 = net.addController('c0', controller=RemoteController, ip='127.0.0.1', port=6633)
-
-    # Configure OVS to use OpenFlow 1.3
-    for t in range(1):
-        s = net.get(f't{t}')
-        s.cmd('ovs-vsctl set bridge s1 protocols=OpenFlow13')
-    for a in range(2):
-        s = net.get(f'a{a}')
-        s.cmd('ovs-vsctl set bridge s1 protocols=OpenFlow13')
-    for i in range(1):
-        s = net.get(f'i{1}')
-        s.cmd('ovs-vsctl set bridge s1 protocols=OpenFlow13')
-    return net
-
 def run():
-    # Initialize Network
-    net = setup_network()
-
-    # Test
+    # Initialize Topology
+    topo = VL2Topo(D_A=2, D_I=2)
+    
+    # Initialize Mininet with RemoteController
+    net = Mininet(topo=topo, controller=RemoteController)
+    
+    print("Starting network...")
+    net.start()
+    
+    print("Testing connectivity (Ping All)...")
     net.pingAll()
-
-    # Stop network
+    
+    # print("Running CLI...")
+    # CLI(net)
+    
+    print("Stopping network...")
     net.stop()
 
 if __name__ == '__main__':
