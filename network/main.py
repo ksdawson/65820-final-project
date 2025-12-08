@@ -58,23 +58,23 @@ def run():
     # replay_trace(net, '../trace_generation/agent_trace/coding_trace_0.json')
 
     # Test multi trace
-    trace_set_one = [
-        '../trace_generation/full_trace/full_coding_trace_0.json',
-        '../trace_generation/full_trace/full_coding_trace_1.json'
-    ]
+    # trace_set_one = [
+    #     '../trace_generation/full_trace/full_coding_trace_0.json',
+    #     '../trace_generation/full_trace/full_coding_trace_1.json'
+    # ]
     trace_set_two = [
         '../trace_generation/full_trace/full_explain_trace_0.json',
         '../trace_generation/full_trace/full_explain_trace_1.json',
         '../trace_generation/full_trace/full_explain_trace_2.json',
         '../trace_generation/full_trace/full_explain_trace_3.json'
     ]
-    trace_set_three = [
-        '../trace_generation/full_trace/full_mesh_trace_0.json',
-        '../trace_generation/full_trace/full_mesh_trace_1.json'
-    ]
-    run_multi_trace_experiment(net, trace_set_one)
+    # trace_set_three = [
+    #     '../trace_generation/full_trace/full_mesh_trace_0.json',
+    #     '../trace_generation/full_trace/full_mesh_trace_1.json'
+    # ]
+    # run_multi_trace_experiment(net, trace_set_one)
     run_multi_trace_experiment(net, trace_set_two)
-    run_multi_trace_experiment(net, trace_set_three)
+    # run_multi_trace_experiment(net, trace_set_three)
 
     # Stop network
     net.stop()

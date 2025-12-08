@@ -239,6 +239,6 @@ def analyze_results(log_dir):
     info(f'Avg Throughput:    {np.mean(throughputs):.2f} Mbps\n')
 
     # Total bytes transferred
-    info(f'Total bytes:       {np.sum(bytes_transmitted)/1e9:.2f} Gb\n')
+    info(f'Total bytes:       {np.sum(bytes_transmitted):.2f} B\n')
 
     info('='*40 + '\n')
