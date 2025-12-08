@@ -3,6 +3,7 @@ from ryu.controller import ofp_event
 from ryu.controller.handler import CONFIG_DISPATCHER, MAIN_DISPATCHER, set_ev_cls
 from ryu.ofproto import ofproto_v1_3
 from ryu.topology import event
+from ryu.lib.packet import packet, ethernet, ether_types
 import networkx as nx
 import random
 
@@ -119,12 +120,79 @@ class VL2Switch(app_manager.RyuApp):
     # Packet handling
     ################################################################
 
+    # def install_path_flow(self, path, ev, src_mac, dst_mac):
+    #     msg = ev.msg
+    #     parser = msg.datapath.ofproto_parser
+        
+    #     # We iterate through the path to stitch the rules together
+    #     # We stop before the last element because the last element is the Host MAC, not a switch
+    #     for i in range(len(path) - 1):
+    #         current_node = path[i]
+    #         next_node = path[i+1]
+            
+    #         # Skip if current_node is not a switch (just in case)
+    #         if isinstance(current_node, str): continue
+
+    #         # Get the Output Port to the next hop
+    #         out_port = self.network_graph[current_node][next_node]['port']
+            
+    #         # Get the Datapath object for this switch
+    #         if current_node not in self.datapaths:
+    #             self.logger.error(f"Cannot install flow: Datapath {current_node} not found!")
+    #             continue
+    #         dp = self.datapaths[current_node]
+            
+    #         # Create the Flow Match and Actions
+    #         # Match: Destination MAC (standard L2 forwarding)
+    #         match = parser.OFPMatch(eth_dst=dst_mac)
+    #         actions = [parser.OFPActionOutput(out_port)]
+            
+    #         # Install the Flow
+    #         self.add_flow(dp, 10, match, actions)
+            
+    #         # Optimization: If this is the switch holding the packet NOW, send it immediately
+    #         if current_node == msg.datapath.id:
+    #             self._send_packet(dp, out_port, packet.Packet(msg.data))
+
     @set_ev_cls(ofp_event.EventOFPPacketIn, MAIN_DISPATCHER)
     def _packet_in_handler(self, ev):
+        # Algo: When flow first enters the network (at the src ToR) calculate the entire path
+        # and install flow rules on every switch along the path. Switches in the middle
+        # should never trigger then.
+
+        # Get packet info
         msg = ev.msg
         datapath = msg.datapath
+        ofproto = datapath.ofproto
+
+        pkt = packet.Packet(msg.data)
+        eth = pkt.get_protocols(ethernet.ethernet)[0]
+
+        # Skip LLDP packets as they're used for topology learning
+        if eth.ethertype == ether_types.ETH_TYPE_LLDP:
+            return
+        src_mac = eth.src
+        dst_mac = eth.dst
+
         dpid = datapath.id
         in_port = msg.match['in_port']
+
+        # Learn the src host location if we haven't seen it
+        if src_mac not in self.network_graph:
+            self.network_graph.add_node(src_mac)
+            self.network_graph.add_edge(dpid, src_mac, port=in_port)
+            self.network_graph.add_edge(src_mac, dpid) # Return path
+            self.logger.info(f"Src host learned: {src_mac} on Switch {dpid} Port {in_port}")
+
+        # Need to learn where the host dst is
+        if dst_mac not in self.network_graph:
+            # We don't know where the destination is yet -> FLOOD
+            out = datapath.ofproto_parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
+                                      in_port=in_port, actions=[datapath.ofproto_parser.OFPActionOutput(ofproto.OFPP_FLOOD)],
+                                      data=msg.data)
+            datapath.send_msg(out)
+            self.logger.info(f"Dst host unknown: {dst_mac} on Switch {dpid} Port {in_port}")
+            return
 
         # CHECK: Where am I?
         switch_type = self.classify_switch(dpid)
@@ -132,18 +200,29 @@ class VL2Switch(app_manager.RyuApp):
             if 1 <= in_port and in_port <= 20:
                 # From host
                 self.logger.info(f"Packet received from host on ToR switch on {dpid} (Port {in_port})")
+
+                # Initiate VL2 logic
             else:
                 # From aggr
                 self.logger.info(f"Packet received from aggr on ToR switch on {dpid} (Port {in_port})")
+
+                # Send to host
         elif switch_type == 'AGGREGATE':
             if 1 <= in_port and in_port <= 2:
                 # From ToR
                 self.logger.info(f"Packet received from ToR on aggr switch on {dpid} (Port {in_port})")
+
+                # Send to inter
             else:
                 # From inter
                 self.logger.info(f"Packet received from inter on aggr switch on {dpid} (Port {in_port})")
+
+                # Send to ToR
         elif switch_type == 'INTERMEDIATE':
             # From aggr
             self.logger.info(f"Packet received from aggr on inter switch on {dpid} (Port {in_port})")
+
+            # Send to aggr
+
         else:
             self.logger.info(f"Packet received on {switch_type} switch on {dpid} (Port {in_port})")
