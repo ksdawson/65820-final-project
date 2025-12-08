@@ -156,7 +156,7 @@ class VL2Switch(app_manager.RyuApp):
             pass
 
     ################################################################
-    # Routing functions
+    # VL2 functions
     ################################################################
 
     def get_random_intermediate_node(self):
@@ -249,73 +249,78 @@ class VL2Switch(app_manager.RyuApp):
         if switch_type == 'TOR':
             if is_host:
                 # From host
-                # self.logger.info(f'Packet received from host on ToR switch on {dpid} (Port {in_port})')
+                self.logger.info(f'Packet received from host on ToR switch on {dpid} (Port {in_port})')
 
                 # If host doesn't know its dst host's mac address it sends a broadcast
                 # So we should return the mac address to it
-                if dst_mac == 'ff:ff:ff:ff:ff:ff':
-                    self.logger.info(' -> ARP broadcast')
+                # if dst_mac == 'ff:ff:ff:ff:ff:ff':
+                #     self.logger.info(' -> ARP broadcast')
 
-                    # Flood to all other host ports on this rack (Ports 1-20)
-                    actions = []
-                    for port in range(1, 21):
-                        if port != in_port:
-                            actions.append(datapath.ofproto_parser.OFPActionOutput(port))
+                #     # Flood to all other host ports on this rack (Ports 1-20)
+                #     actions = []
+                #     for port in range(1, 21):
+                #         if port != in_port:
+                #             actions.append(datapath.ofproto_parser.OFPActionOutput(port))
                     
-                    # Send the packet out immediately
-                    out = datapath.ofproto_parser.OFPPacketOut(datapath=datapath, 
-                                              buffer_id=msg.buffer_id,
-                                              in_port=in_port, 
-                                              actions=actions, 
-                                              data=msg.data)
-                    datapath.send_msg(out)
+                #     # Send the packet out immediately
+                #     out = datapath.ofproto_parser.OFPPacketOut(datapath=datapath, 
+                #                               buffer_id=msg.buffer_id,
+                #                               in_port=in_port, 
+                #                               actions=actions, 
+                #                               data=msg.data)
+                #     datapath.send_msg(out)
+                #     return
+                if dst_mac == 'ff:ff:ff:ff:ff:ff':
+                    # We must flood this packet to ALL ToR switches
+                    for tor_dpid in self.tor_switches:
+                        if tor_dpid not in self.datapaths:
+                            continue
+                        tor_dp = self.datapaths[tor_dpid]
+                        tor_parser = tor_dp.ofproto_parser
+                        actions = []
+                        # Flood ports 1-20 (Host facing ports)
+                        for port in range(1, 21):
+                            # CRITICAL: If this is the source switch, 
+                            # don't send it back to the host that sent it!
+                            if tor_dpid == dpid and port == in_port:
+                                continue
+                            actions.append(tor_parser.OFPActionOutput(port))
+                        # Send the packet out
+                        if actions:
+                            out = tor_parser.OFPPacketOut(
+                                datapath=tor_dp,
+                                buffer_id=tor_dp.ofproto.OFP_NO_BUFFER,
+                                in_port=tor_dp.ofproto.OFPP_CONTROLLER,
+                                actions=actions,
+                                data=msg.data)
+                            tor_dp.send_msg(out)
                     return
 
                 # Install flows for packet
                 if self.network_graph.has_edge(dpid, dst_mac):
-                    self.logger.info(' -> Local Switching (Intra-Rack)')
-                    
                     # Path is simply [Current_Switch, Destination_MAC]
                     # This utilizes the edge we created in Host Learning which has the 'port'
                     path = [dpid, dst_mac]
                     self.install_path_flow(path, ev, dst_mac)
+                    self.logger.info(' -> Local Switching (Intra-Rack)')
                 else:
-                    # self.logger.info(' -> Remote Destination (Inter-Rack)')
-                    # TODO VL2 logic
-                    return
+                    # VL2 logic
+                    path = self.get_vl2_path(dpid, dst_mac)
+                    self.install_path_flow(path, ev, dst_mac)
+                    self.logger.info(' -> Remote Destination (Inter-Rack)')
             else:
                 # From aggr
-                # self.logger.info(f'Packet received from aggr on ToR switch on {dpid} (Port {in_port})')
-
-                # Send to host
-                if self.network_graph.has_edge(dpid, dst_mac):
-                     # Deliver to the host
-                     path = [dpid, dst_mac]
-                     self.install_path_flow(path, ev, dst_mac)
-                else:
-                    #  self.logger.warning(f'Error: Packet at {dpid} for unknown local host {dst_mac}')
-                    return
+                self.logger.warning(f'Packet received from aggr on ToR switch on {dpid} (Port {in_port})')
         elif switch_type == 'AGGREGATE':
             is_tor = 1 <= in_port and in_port <= 2
             if is_tor:
                 # From ToR
-                # self.logger.info(f'Packet received from ToR on aggr switch on {dpid} (Port {in_port})')
-
-                # Send to inter
-                return
+                self.logger.warning(f'Packet received from ToR on aggr switch on {dpid} (Port {in_port})')
             else:
                 # From inter
-                # self.logger.info(f'Packet received from inter on aggr switch on {dpid} (Port {in_port})')
-
-                # Send to ToR
-                return
+                self.logger.warning(f'Packet received from inter on aggr switch on {dpid} (Port {in_port})')
         elif switch_type == 'INTERMEDIATE':
             # From aggr
-            # self.logger.info(f'Packet received from aggr on inter switch on {dpid} (Port {in_port})')
-
-            # Send to aggr
-            return
+            self.logger.warning(f'Packet received from aggr on inter switch on {dpid} (Port {in_port})')
         else:
-            # self.logger.info(f'Packet received on {switch_type} switch on {dpid} (Port {in_port})')
-
-            return
+            self.logger.warning(f'Packet received on {switch_type} switch on {dpid} (Port {in_port})')
