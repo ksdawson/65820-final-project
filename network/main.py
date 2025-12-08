@@ -5,6 +5,7 @@ from mininet.cli import CLI
 from vl2 import VL2Topo
 import time
 from vl2_perf import run_traffic_test
+from llm import replay_trace
 
 def host_hello(net):
     print("*** Making hosts known to network (Sending 1 packet per host)...")
@@ -50,7 +51,10 @@ def run():
     # CLI(net)
 
     # Run perf test
-    run_traffic_test(net)
+    # run_traffic_test(net)
+
+    # Test trace
+    replay_trace(net, '../trace_generation/agent_trace/coding_trace_0.json')
 
     # Stop network
     net.stop()
