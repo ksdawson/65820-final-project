@@ -149,7 +149,7 @@ class VL2Switch(app_manager.RyuApp):
     # Packet handling
     ################################################################
 
-    def install_path_flow(self, path, ev, src_mac, dst_mac):
+    def install_path_flow(self, path, ev, dst_mac, src_mac=None):
         msg = ev.msg
         parser = msg.datapath.ofproto_parser
         
@@ -227,7 +227,7 @@ class VL2Switch(app_manager.RyuApp):
                                       in_port=in_port, actions=[datapath.ofproto_parser.OFPActionOutput(ofproto.OFPP_FLOOD)],
                                       data=msg.data)
             datapath.send_msg(out)
-            self.logger.info(f"Dst host unknown: {dst_mac} on Switch {dpid} Port {in_port}")
+            # self.logger.info(f"Dst host unknown: {dst_mac} on Switch {dpid} Port {in_port}")
             return
 
         # Switch logic
