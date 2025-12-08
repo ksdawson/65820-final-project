@@ -8,7 +8,7 @@ import glob
 import matplotlib.pyplot as plt
 from mininet.log import info, error
 
-CC_ALG='dctcp'
+CC_ALG='cubic'
 
 def load_and_merge_traces(trace_files):
     '''
