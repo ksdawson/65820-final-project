@@ -217,18 +217,18 @@ class VL2Switch(app_manager.RyuApp):
             self.network_graph.add_node(src_mac, type='HOST')
             self.network_graph.add_edge(dpid, src_mac, port=in_port)
             self.network_graph.add_edge(src_mac, dpid) # Return path
-            self.logger.info(f"[HOST LEARNED] MAC: {src_mac} attached to Switch: {dpid} Port: {in_port}")
-            self.logger.info(f"Current Graph Nodes: {self.network_graph.nodes()}")
+            # self.logger.info(f"[HOST LEARNED] MAC: {src_mac} attached to Switch: {dpid} Port: {in_port}")
+            # self.logger.info(f"Current Graph Nodes: {self.network_graph.nodes()}")
 
-        # Need to learn where the host dst is
-        if dst_mac not in self.network_graph:
-            # We don't know where the destination is yet -> FLOOD
-            out = datapath.ofproto_parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
-                                      in_port=in_port, actions=[datapath.ofproto_parser.OFPActionOutput(ofproto.OFPP_FLOOD)],
-                                      data=msg.data)
-            datapath.send_msg(out)
-            # self.logger.info(f"Dst host unknown: {dst_mac} on Switch {dpid} Port {in_port}")
-            return
+        # # Need to learn where the host dst is
+        # if dst_mac not in self.network_graph:
+        #     # We don't know where the destination is yet -> FLOOD
+        #     out = datapath.ofproto_parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
+        #                               in_port=in_port, actions=[datapath.ofproto_parser.OFPActionOutput(ofproto.OFPP_FLOOD)],
+        #                               data=msg.data)
+        #     datapath.send_msg(out)
+        #     # self.logger.info(f"Dst host unknown: {dst_mac} on Switch {dpid} Port {in_port}")
+        #     return
 
         # Switch logic
         if switch_type == 'TOR':
