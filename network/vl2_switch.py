@@ -38,18 +38,27 @@ class VL2Switch(app_manager.RyuApp):
 
     @set_ev_cls(ofp_event.EventOFPSwitchFeatures, CONFIG_DISPATCHER)
     def switch_features_handler(self, ev):
-        dpid = ev.msg.datapath.id
         # Add node
+        datapath = ev.msg.datapath
+        dpid = datapath.id
         self.network_graph.add_node(dpid)
-        # Get switch type
+        # Store switch type
         switch_type = self.classify_switch(dpid)
-        self.logger.info(f'{switch_type} switch connected: {dpid}')
         if switch_type == 'INTERMEDIATE':
             self.inter_switches.add(dpid)
         elif switch_type == 'AGGREGATE':
             self.aggr_switches.add(dpid)
         elif switch_type == 'TOR':
             self.tor_switches.add(dpid)
+        self.logger.info(f'{switch_type} switch connected: {dpid}')
+        
+        # Install Table-Miss Flow Entry
+        # Priority 0 (Lowest) -> Match Everything -> Send to Controller
+        ofproto = datapath.ofproto
+        match = datapath.ofproto_parser.OFPMatch()
+        actions = [datapath.ofproto_parser.OFPActionOutput(ofproto.OFPP_CONTROLLER,
+                                          ofproto.OFPCML_NO_BUFFER)]
+        self.add_flow(datapath, 0, match, actions)
         
     @set_ev_cls(event.EventLinkAdd)
     def link_add_handler(self, ev):
