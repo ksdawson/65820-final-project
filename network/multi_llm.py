@@ -194,8 +194,9 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
         """Execute all batched commands"""
         for host, cmds in cmd_batches.items():
             if cmds:
-                # Join all commands with semicolons and execute in one h.cmd()
-                combined = '; '.join(cmds)
+                # Join commands - since each ends with &, just use space
+                # "cmd1 &" + " " + "cmd2 &" works correctly in bash
+                combined = ' '.join(cmds)
                 host.cmd(combined)
         cmd_batches.clear()
 
@@ -255,7 +256,7 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
             
             # Flush if batch is full
             if len(cmd_batches[phys_sender]) >= BATCH_SIZE:
-                combined = '; '.join(cmd_batches[phys_sender])
+                combined = ' '.join(cmd_batches[phys_sender])
                 phys_sender.cmd(combined)
                 cmd_batches[phys_sender] = []
         
