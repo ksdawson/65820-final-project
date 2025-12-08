@@ -30,7 +30,7 @@ class VL2Topo(Topo):
 
         # Link parameters
         LOSS = 1e-12
-        DELAY = '50us'
+        DELAY = '1ms'
         QUEUE_SIZE = 1000
 
         # Connect hosts to ToRs

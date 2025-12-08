@@ -1,8 +1,10 @@
 import json
 import time
 import math
+import sys
 import random
 import os
+import re
 import numpy as np
 import glob
 import matplotlib.pyplot as plt
@@ -231,10 +233,25 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
             port_offset = host_port_counter[rx_host_name] % num_server_ports
             port = BASE_PORT + port_offset
             host_port_counter[rx_host_name] += 1
+
+            # 1. Extract Group IDs
+            sender_group = sender_name.rsplit('.', 1)[0] if '.' in sender_name else sender_name
+            rx_group = rx_name.rsplit('.', 1)[0] if '.' in rx_name else rx_name
+
+            # 2. Assign ToS based on relationship
+            if sender_group == rx_group:
+                # Type: Distributed Inference (Intra-group)
+                # ToS 16 (0x10) -> DSCP 4
+                tos_value = 16 
+            else:
+                # Type: Agent-Agent (Inter-group)
+                # ToS 32 (0x20) -> DSCP 8
+                tos_value = 32
             
             # --- Execute command ---
             log_file = f'{log_dir}/{i}_{sender_name}_to_{rx_name}.json'
             cmd = (f'iperf3 -c {phys_rx.IP()} -p {port} '
+                   f'-S {tos_value} '
                    f'-n {size_bytes} -J '
                    f'> {log_file} 2>&1 &')
             
