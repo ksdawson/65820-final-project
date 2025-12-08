@@ -167,7 +167,7 @@ class VL2Switch(app_manager.RyuApp):
             
             # Get the Datapath object for this switch
             if current_node not in self.datapaths:
-                self.logger.error(f"Cannot install flow: Datapath {current_node} not found!")
+                self.logger.error(f'Cannot install flow: Datapath {current_node} not found!')
                 continue
             dp = self.datapaths[current_node]
             
@@ -205,7 +205,7 @@ class VL2Switch(app_manager.RyuApp):
 
         # Ignore LLDP packets as they're used for topology learning
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
-            # self.logger.info(f"LLDP packet received on {switch_type} switch on {dpid} (Port {in_port})")
+            # self.logger.info(f'LLDP packet received on {switch_type} switch on {dpid} (Port {in_port})')
             return
         
         # Get host info
@@ -217,40 +217,30 @@ class VL2Switch(app_manager.RyuApp):
             self.network_graph.add_node(src_mac, type='HOST')
             self.network_graph.add_edge(dpid, src_mac, port=in_port)
             self.network_graph.add_edge(src_mac, dpid) # Return path
-            # self.logger.info(f"[HOST LEARNED] MAC: {src_mac} attached to Switch: {dpid} Port: {in_port}")
-            # self.logger.info(f"Current Graph Nodes: {self.network_graph.nodes()}")
-
-        # # Need to learn where the host dst is
-        # if dst_mac not in self.network_graph:
-        #     # We don't know where the destination is yet -> FLOOD
-        #     out = datapath.ofproto_parser.OFPPacketOut(datapath=datapath, buffer_id=msg.buffer_id,
-        #                               in_port=in_port, actions=[datapath.ofproto_parser.OFPActionOutput(ofproto.OFPP_FLOOD)],
-        #                               data=msg.data)
-        #     datapath.send_msg(out)
-        #     # self.logger.info(f"Dst host unknown: {dst_mac} on Switch {dpid} Port {in_port}")
-        #     return
+            # self.logger.info(f'[HOST LEARNED] MAC: {src_mac} attached to Switch: {dpid} Port: {in_port}')
+            # self.logger.info(f'Current Graph Nodes: {self.network_graph.nodes()}')
 
         # Switch logic
         if switch_type == 'TOR':
             if 1 <= in_port and in_port <= 20:
                 # From host
-                self.logger.info(f"Packet received from host on ToR switch on {dpid} (Port {in_port})")
+                # self.logger.info(f'Packet received from host on ToR switch on {dpid} (Port {in_port})')
 
                 # Install flows for packet
                 if self.network_graph.has_edge(dpid, dst_mac):
-                    self.logger.info(" -> Local Switching (Intra-Rack)")
+                    self.logger.info(' -> Local Switching (Intra-Rack)')
                     
                     # Path is simply [Current_Switch, Destination_MAC]
                     # This utilizes the edge we created in Host Learning which has the 'port'
                     path = [dpid, dst_mac]
                     self.install_path_flow(path, ev, dst_mac)
                 else:
-                    self.logger.info(" -> Remote Destination (Inter-Rack)")
+                    # self.logger.info(' -> Remote Destination (Inter-Rack)')
                     # TODO VL2 logic
                     return
             else:
                 # From aggr
-                self.logger.info(f"Packet received from aggr on ToR switch on {dpid} (Port {in_port})")
+                # self.logger.info(f'Packet received from aggr on ToR switch on {dpid} (Port {in_port})')
 
                 # Send to host
                 if self.network_graph.has_edge(dpid, dst_mac):
@@ -258,23 +248,28 @@ class VL2Switch(app_manager.RyuApp):
                      path = [dpid, dst_mac]
                      self.install_path_flow(path, ev, dst_mac)
                 else:
-                     self.logger.warning(f"Error: Packet at {dpid} for unknown local host {dst_mac}")
+                    #  self.logger.warning(f'Error: Packet at {dpid} for unknown local host {dst_mac}')
+                    return
         elif switch_type == 'AGGREGATE':
             if 1 <= in_port and in_port <= 2:
                 # From ToR
-                self.logger.info(f"Packet received from ToR on aggr switch on {dpid} (Port {in_port})")
+                # self.logger.info(f'Packet received from ToR on aggr switch on {dpid} (Port {in_port})')
 
                 # Send to inter
+                return
             else:
                 # From inter
-                self.logger.info(f"Packet received from inter on aggr switch on {dpid} (Port {in_port})")
+                # self.logger.info(f'Packet received from inter on aggr switch on {dpid} (Port {in_port})')
 
                 # Send to ToR
+                return
         elif switch_type == 'INTERMEDIATE':
             # From aggr
-            self.logger.info(f"Packet received from aggr on inter switch on {dpid} (Port {in_port})")
+            # self.logger.info(f'Packet received from aggr on inter switch on {dpid} (Port {in_port})')
 
             # Send to aggr
-
+            return
         else:
-            self.logger.info(f"Packet received on {switch_type} switch on {dpid} (Port {in_port})")
+            # self.logger.info(f'Packet received on {switch_type} switch on {dpid} (Port {in_port})')
+
+            return
