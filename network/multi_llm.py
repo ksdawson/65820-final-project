@@ -170,7 +170,8 @@ def run_multi_trace_experiment(net, trace_file_paths, percentage=1.0, procs_per_
             
             # --- CHANGED: REDIRECT OUTPUT TO LOG FILE ---
             # We append (>>) to a log file named after the sender host
-            log_file = f'{log_dir}/{phys_sender.name}.log'
+            # log_file = f'{log_dir}/{phys_sender.name}.log'
+            log_file = f'{log_dir}/{i}_{sender_name}_to_{rx_name}.log'
             
             cmd = (f'python3 traffic_tool.py -m client '
                    f'-t {phys_rx.IP()} -p 8000 -b {size_bytes} '
