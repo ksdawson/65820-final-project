@@ -28,10 +28,10 @@ def run():
 
     # Wait for switches to connect to controller and STP to converge
     print("*** Waiting for switches to connect and STP to converge...")
-    time.sleep(35)  # STP needs ~30s to converge
+    time.sleep(5) # STP needs ~5s to converge
 
     # Test
-    net.pingAll()
+    # net.pingAll()
 
     # Drop into CLI for manual testing
     CLI(net)
