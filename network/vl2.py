@@ -19,7 +19,7 @@ class VL2Topo(Topo):
         num_inter = D_A // 2
         num_aggr = D_I
         num_tor = D_A * D_I // 4
-        num_host = 20 * num_tor
+        num_host = 4 * num_tor  # Reduced for faster testing
 
         # Setup nodes
         self._inter_switches = {f'i{i}':self.addSwitch(f'i{i}') for i in range(num_inter)}
@@ -30,8 +30,8 @@ class VL2Topo(Topo):
         # Connect hosts to ToRs
         for t in range(num_tor):
             tor = self._tor_switches[f't{t}']
-            for h in range(20):
-                host = self._hosts[f'h{t*20+h}']
+            for h in range(4):  # Reduced for faster testing
+                host = self._hosts[f'h{t*4+h}']
                 self.addLink(host, tor, cls=TCLink,
                     bw=server_link, # Mbps
                     delay='0ms',

@@ -19,9 +19,9 @@ class SimpleSwitch(app_manager.RyuApp):
 
     @set_ev_cls(event.EventSwitchEnter)
     def get_topology_data(self, ev):
-        switch_list = get_switch(self.topology_api_app, None)
+        switch_list = get_switch(self, None)
         switches=[switch.dp.id for switch in switch_list]
-        links_list = get_link(self.topology_api_app, None)
+        links_list = get_link(self, None)
         links=[(link.src.dpid,link.dst.dpid,{'port':link.src.port_no}) for link in links_list]
         print(switches, links)
 

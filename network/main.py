@@ -1,7 +1,9 @@
 from mininet.net import Mininet
 from mininet.log import setLogLevel
 from mininet.node import RemoteController
+from mininet.cli import CLI
 from vl2 import VL2Topo
+import time
 
 def setup_network():
     # Initialize Network
@@ -18,8 +20,15 @@ def run():
     # Initialize Network
     net = setup_network()
 
+    # Wait for switches to connect to controller
+    print("*** Waiting for switches to connect to controller...")
+    time.sleep(3)
+
     # Test
     net.pingAll()
+
+    # Drop into CLI for manual testing
+    CLI(net)
 
     # Stop network
     net.stop()
