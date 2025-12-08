@@ -15,8 +15,10 @@ def setup_network():
     net.start()
 
     # Enable STP on all switches to prevent broadcast storms from loops
+    # Also set OpenFlow 1.3 for compatibility with sanity_check.py
     for switch in net.switches:
         switch.cmd('ovs-vsctl set bridge {} stp_enable=true'.format(switch.name))
+        switch.cmd('ovs-vsctl set bridge {} protocols=OpenFlow13'.format(switch.name))
 
     return net
 
