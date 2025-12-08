@@ -306,8 +306,9 @@ class VL2Switch(app_manager.RyuApp):
                 else:
                     # VL2 logic
                     path = self.get_vl2_path(dpid, dst_mac)
-                    self.install_path_flow(path, ev, dst_mac)
-                    self.logger.info(' -> Remote Destination (Inter-Rack)')
+                    if path:
+                        self.install_path_flow(path, ev, dst_mac)
+                        self.logger.info(' -> Remote Destination (Inter-Rack)')
             else:
                 # From aggr
                 self.logger.warning(f'Packet received from aggr on ToR switch on {dpid} (Port {in_port})')
