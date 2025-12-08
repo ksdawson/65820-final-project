@@ -6,28 +6,11 @@ from vl2 import VL2Topo
 def run():
     # Initialize Topology
     topo = VL2Topo(D_A=2, D_I=2)
-    
-    net = Mininet(
-        topo=topo, 
-        controller=RemoteController, 
-        switch=OVSSwitch,
-        autoSetMacs=True
-    )
-    
-    # Apply protocols to all switches
-    for switch in net.switches:
-        switch.opts['protocols'] = 'OpenFlow13'
-
-    print("Starting network...")
+    net = Mininet(topo=topo, controller=RemoteController)
+    c0 = net.addController('c0', controller=RemoteController, ip='127.0.0.1', port=6633, protocols='OpenFlow13')
     net.start()
-    
-    print("Waiting 5 seconds for LLDP discovery...")
-    import time
-    time.sleep(5) 
-    
-    print("Testing connectivity...")
-    net.pingAll()
 
+    # Stop the network when done
     net.stop()
 
 if __name__ == '__main__':
