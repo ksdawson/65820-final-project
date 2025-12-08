@@ -170,6 +170,7 @@ class VL2Switch(app_manager.RyuApp):
 
         # Skip LLDP packets as they're used for topology learning
         if eth.ethertype == ether_types.ETH_TYPE_LLDP:
+            self.logger.info(f"LLDP packet received on {self.classify_switch(dpid)} switch on {dpid} (Port {in_port})")
             return
         src_mac = eth.src
         dst_mac = eth.dst
