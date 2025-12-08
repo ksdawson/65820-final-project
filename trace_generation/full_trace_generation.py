@@ -2,6 +2,7 @@ import json
 import random
 import os
 from pathlib import Path
+from datetime import datetime
 
 
 MSG_SIZE = 119435 # bytes
@@ -9,6 +10,11 @@ SECONDS_PER_TOKEN = 0.004  # 4 ms in seconds
 
 AGENT_TRACE_DIR = "agent_trace"
 FULL_TRACE_DIR = "full_trace"
+
+
+def parse_timestamp(ts: str) -> datetime:
+    """Parse ISO timestamp string to datetime object."""
+    return datetime.fromisoformat(ts)
 
 
 def get_time_breakdown(size: int, generation_time: float) -> float:
@@ -61,12 +67,18 @@ def process_agent_trace(trace_path: str, output_path: str):
     # First element must be the nodes dictionary for server_management.py compatibility
     full_trace = [nodes]
     input_size = 0
-    cumulative_time = 0  # Track cumulative time in seconds
+    
+    # Get base time from first entry to compute relative times
+    base_time = parse_timestamp(trace[0]["time_sent"])
 
     for entry in trace:
         if entry["sender"] == -1 or -1 in entry["receiver"] or entry['llm_gen_time'] == 0 or input_size == 0:
             input_size = entry["data_size(kb)"]
             continue
+
+        # Calculate absolute time of this entry's END relative to base (time_sent is when message was sent, i.e., end of generation)
+        entry_end_time = (parse_timestamp(entry["time_sent"]) - base_time).total_seconds()
+        entry_start_time = entry_end_time - entry['llm_gen_time']
 
         message_pattern = get_message_size_and_interval(input_size, entry["data_size(kb)"], entry['llm_gen_time'], len(nodes[entry["sender"]]))
         node_list = nodes[entry["sender"]]
@@ -90,7 +102,7 @@ def process_agent_trace(trace_path: str, output_path: str):
                             full_entry = {
                                 "sender": node_list[i][0],
                                 "receiver": [node_list[j][0]],
-                                "time": cumulative_time + local_time,
+                                "time": entry_start_time + local_time,
                                 "size": message_pattern["prefill_size"] // num_nodes,
                             }
                             full_trace.append(full_entry)
@@ -104,7 +116,7 @@ def process_agent_trace(trace_path: str, output_path: str):
                             full_entry = {
                                 "sender": node_list[i][0],
                                 "receiver": [node_list[j][0]],
-                                "time": cumulative_time + local_time,
+                                "time": entry_start_time + local_time,
                                 "size": message_pattern["decode_size"],
                             }
                             full_trace.append(full_entry)
@@ -128,14 +140,14 @@ def process_agent_trace(trace_path: str, output_path: str):
                     full_entry = {
                         "sender": group[0][0],
                         "receiver": [group[1][0]],
-                        "time": cumulative_time + local_time,
+                        "time": entry_start_time + local_time,
                         "size": message_pattern["prefill_size"] // num_nodes,
                     }
                     full_trace.append(full_entry)
                     full_entry = {
                         "sender": group[1][0],
                         "receiver": [group[0][0]],
-                        "time": cumulative_time + local_time,
+                        "time": entry_start_time + local_time,
                         "size": message_pattern["prefill_size"] // num_nodes,
                     }
                     full_trace.append(full_entry)
@@ -147,14 +159,14 @@ def process_agent_trace(trace_path: str, output_path: str):
                     full_entry = {
                         "sender": group[0][0],
                         "receiver": [group[1][0]],
-                        "time": cumulative_time + local_time,
+                        "time": entry_start_time + local_time,
                         "size": message_pattern["decode_size"],
                     }
                     full_trace.append(full_entry)
                     full_entry = {
                         "sender": group[1][0],
                         "receiver": [group[0][0]],
-                        "time": cumulative_time + local_time,
+                        "time": entry_start_time + local_time,
                         "size": message_pattern["decode_size"],
                     }
                     full_trace.append(full_entry)
@@ -166,7 +178,7 @@ def process_agent_trace(trace_path: str, output_path: str):
                 full_entry = {
                     "sender": node_list[i][0],
                     "receiver": [node_list[i+1][0]],
-                    "time": cumulative_time + local_time,
+                    "time": entry_start_time + local_time,
                     "size": message_pattern["prefill_size"],
                 }
                 full_trace.append(full_entry)
@@ -177,7 +189,7 @@ def process_agent_trace(trace_path: str, output_path: str):
                     full_entry = {
                         "sender": node_list[i][0],
                         "receiver": [node_list[i+1][0]],
-                        "time": cumulative_time + local_time,
+                        "time": entry_start_time + local_time,
                         "size": message_pattern["decode_size"],
                     }
                     full_trace.append(full_entry)
@@ -185,11 +197,10 @@ def process_agent_trace(trace_path: str, output_path: str):
         full_trace.append({
             "sender": node_list[-1][0],
             "receiver": [str(r)+".0" for r in entry["receiver"]],
-            "time": cumulative_time + entry['llm_gen_time'],
+            "time": entry_end_time,
             "size": entry["data_size(kb)"]*1000,
         })
 
-        cumulative_time += entry['llm_gen_time']  # Add this entry's duration to cumulative
         input_size = entry["data_size(kb)"]
 
     with open(output_path, "w") as f:
