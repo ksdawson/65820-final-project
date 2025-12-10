@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 from mininet.log import info, error
 
 CC_ALG='dctcp'
-MAX_EVENTS=100
+MAX_EVENTS=60000
 
 def load_and_merge_traces(trace_files):
     '''
